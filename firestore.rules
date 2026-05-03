@@ -1,0 +1,161 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper functions ─────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && getUserRole() == 'superadmin';
+    }
+
+    function isSupervisor() {
+      return isSignedIn() && (getUserRole() == 'supervisor' || getUserRole() == 'superadmin');
+    }
+
+    function isDriver() {
+      return isSignedIn() && getUserRole() == 'driver';
+    }
+
+    function isOwner(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    // ─── Users collection ─────────────────────────────────────────
+    match /users/{userId} {
+      // Anyone signed in can read their own profile
+      // Supervisors and superadmins can read all profiles
+      allow read: if isOwner(userId) || isSupervisor();
+
+      // Users can create their own profile during registration
+      allow create: if isOwner(userId);
+
+      // Users can update their own profile (except role and status)
+      // Supervisors can update status (approve drivers)
+      // Superadmins can update any profile (including role and status)
+      allow update: if (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'status']))
+                    || isSupervisor();
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Tasks collection ─────────────────────────────────────────
+    match /tasks/{taskId} {
+      // Supervisors and superadmins can read ALL tasks
+      // Drivers can read tasks assigned to them
+      allow read: if isSupervisor()
+                  || (isSignedIn() && resource.data.assignedDriverId == request.auth.uid);
+
+      // Supervisors and superadmins can create tasks
+      allow create: if isSupervisor();
+
+      // Drivers can update their assigned tasks (status, POD, acceptance, etc.)
+      // Supervisors can update any task
+      allow update: if isSupervisor()
+                    || (isSignedIn() && resource.data.assignedDriverId == request.auth.uid);
+
+      allow delete: if isSupervisor();
+    }
+
+    // ─── Trip Sessions ────────────────────────────────────────────
+    match /tripSessions/{tripId} {
+      // Drivers can read their own trips
+      // Supervisors can read all trips
+      allow read: if isSignedIn() && (
+        resource.data.driverId == request.auth.uid
+        || isSupervisor()
+      );
+
+      // Drivers can create their own trips
+      allow create: if isDriver() && request.resource.data.driverId == request.auth.uid;
+
+      // Drivers can update their own trips
+      // Supervisors can update any trip
+      allow update: if isSupervisor()
+                    || (isSignedIn() && resource.data.driverId == request.auth.uid);
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Drivers (location pings) ─────────────────────────────────
+    match /drivers/{driverId} {
+      allow read: if isSignedIn();
+      allow write: if isOwner(driverId);
+    }
+
+    // ─── Chats ────────────────────────────────────────────────────
+    match /chats/{taskId}/messages/{messageId} {
+      // Both supervisor and assigned driver can read/write messages
+      allow read, write: if isSignedIn();
+    }
+
+    // ─── Routes ───────────────────────────────────────────────────
+    match /routes/{routeId} {
+      allow read: if isSignedIn() && (
+        resource.data.driverUid == request.auth.uid
+        || resource.data.supervisorId == request.auth.uid
+        || isSuperAdmin()
+      );
+      allow create, update: if isSupervisor();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Fuel Expenses ────────────────────────────────────────────
+    match /fuelExpenses/{expenseId} {
+      // Drivers can read their own expenses
+      // Supervisors and superadmins can read all
+      allow read: if isSignedIn() && (
+        resource.data.driverId == request.auth.uid
+        || isSupervisor()
+      );
+
+      // Drivers can create their own expenses
+      allow create: if isDriver() && request.resource.data.driverId == request.auth.uid;
+
+      // Supervisors can update status (approve/reject)
+      // Drivers can update their own pending expenses
+      allow update: if isSupervisor()
+                    || (isOwner(resource.data.driverId) && resource.data.status == 'pending');
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Odometer Readings ────────────────────────────────────────
+    match /odometerReadings/{readingId} {
+      allow read: if isSignedIn() && (
+        resource.data.driverId == request.auth.uid
+        || isSupervisor()
+      );
+      allow create: if isDriver() && request.resource.data.driverId == request.auth.uid;
+      allow update: if isSupervisor();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Notifications ────────────────────────────────────────────
+    match /notifications/{notificationId} {
+      // Recipients can read their own notifications
+      allow read: if isSignedIn() && resource.data.recipientId == request.auth.uid;
+
+      // Any signed-in user can create notifications (drivers notify supervisors, supervisors notify drivers)
+      allow create: if isSignedIn();
+
+      // Recipients can update their own notifications (mark as read)
+      allow update: if isSignedIn() && resource.data.recipientId == request.auth.uid;
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Reports ──────────────────────────────────────────────────
+    match /reports/{reportId} {
+      allow read: if isSupervisor();
+      allow write: if isSuperAdmin();
+    }
+  }
+}

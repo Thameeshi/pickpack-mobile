@@ -1,0 +1,227 @@
+import {
+  collection, addDoc, getDoc, getDocs, updateDoc, deleteDoc,
+  doc, query, where,
+} from 'firebase/firestore';
+import { db, storage } from './firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { Task, TaskCreatePayload, TaskStatus } from '../types';
+import { notifyTaskAssigned } from './notificationService';
+
+// ─── Generate unique QR code for a task ────────────────────────────
+function generateQRCode(taskId: string): string {
+  const short = taskId.slice(0, 8).toUpperCase();
+  const ts = Date.now().toString(36).toUpperCase();
+  return `PPCK-${short}-${ts}`;
+}
+
+// ─── Create a new task ─────────────────────────────────────────────
+export async function createTask(payload: TaskCreatePayload): Promise<string> {
+  const taskData: Omit<Task, 'id'> = {
+    ...payload,
+    status: payload.assignedDriverId ? 'assigned' : 'pending',
+    priority: payload.priority || 'MEDIUM',
+    qrCode: '', // Will be set after we get the doc ID
+    driverAccepted: false,
+    offlineSynced: true,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  const docRef = await addDoc(collection(db, 'tasks'), taskData);
+
+  // Now set the QR code with the real doc ID
+  const qrCode = generateQRCode(docRef.id);
+  await updateDoc(doc(db, 'tasks', docRef.id), { qrCode });
+
+  // Send notification to assigned driver
+  if (payload.assignedDriverId) {
+    try {
+      await notifyTaskAssigned(
+        payload.assignedDriverId,
+        docRef.id,
+        `${payload.pickupLocation} → ${payload.deliveryLocation}`,
+        payload.supervisorId,
+        payload.supervisorName || 'Supervisor',
+      );
+    } catch (e) {
+      console.log('Failed to send notification:', e);
+    }
+  }
+
+  return docRef.id;
+}
+
+// ─── Get task by ID ────────────────────────────────────────────────
+export async function getTaskById(taskId: string): Promise<Task | null> {
+  const snap = await getDoc(doc(db, 'tasks', taskId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } as Task : null;
+}
+
+// ─── Get ALL tasks (no composite index needed) ────────────────────
+export async function getAllTasks(): Promise<Task[]> {
+  try {
+    const snap = await getDocs(collection(db, 'tasks'));
+    const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
+    return tasks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  } catch (e) {
+    console.log('getAllTasks error:', e);
+    return [];
+  }
+}
+
+// ─── Get tasks by supervisor ───────────────────────────────────────
+export async function getTasksBySupervisor(supervisorId: string): Promise<Task[]> {
+  if (!supervisorId) return [];
+  const q = query(collection(db, 'tasks'), where('supervisorId', '==', supervisorId));
+  const snap = await getDocs(q);
+  const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
+  return tasks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+// ─── Get tasks by driver ──────────────────────────────────────────
+export async function getTasksByDriver(driverId: string): Promise<Task[]> {
+  if (!driverId) return [];
+  const q = query(collection(db, 'tasks'), where('assignedDriverId', '==', driverId));
+  const snap = await getDocs(q);
+  const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() } as Task));
+  return tasks.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+}
+
+// ─── Update task ──────────────────────────────────────────────────
+export async function updateTask(taskId: string, updates: Partial<Task>): Promise<void> {
+  await updateDoc(doc(db, 'tasks', taskId), { ...updates, updatedAt: Date.now() });
+}
+
+// ─── Assign task to driver (with notification) ────────────────────
+export async function assignTaskToDriver(
+  taskId: string, driverId: string, driverName?: string,
+  supervisorId?: string, supervisorName?: string,
+): Promise<void> {
+  const task = await getTaskById(taskId);
+  await updateDoc(doc(db, 'tasks', taskId), {
+    assignedDriverId: driverId,
+    assignedDriverName: driverName || '',
+    status: 'assigned' as TaskStatus,
+    driverAccepted: false,
+    updatedAt: Date.now(),
+  });
+
+  // Send notification
+  try {
+    await notifyTaskAssigned(
+      driverId,
+      taskId,
+      task ? `${task.pickupLocation} → ${task.deliveryLocation}` : 'New delivery',
+      supervisorId || '',
+      supervisorName || 'Supervisor',
+    );
+  } catch {}
+}
+
+// ─── Driver accepts a task ────────────────────────────────────────
+export async function acceptTask(taskId: string): Promise<void> {
+  await updateDoc(doc(db, 'tasks', taskId), {
+    status: 'accepted' as TaskStatus,
+    driverAccepted: true,
+    acceptedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+// ─── Driver rejects a task ────────────────────────────────────────
+export async function rejectTask(taskId: string, reason?: string): Promise<void> {
+  await updateDoc(doc(db, 'tasks', taskId), {
+    status: 'pending' as TaskStatus,
+    assignedDriverId: null,
+    assignedDriverName: null,
+    driverAccepted: false,
+    rejectedReason: reason || '',
+    updatedAt: Date.now(),
+  });
+}
+
+// ─── Update task status ───────────────────────────────────────────
+export async function updateTaskStatus(
+  taskId: string, status: TaskStatus, extras?: Partial<Task>
+): Promise<void> {
+  const updates: Partial<Task> = { status, updatedAt: Date.now(), ...extras };
+  if (status === 'arrived') updates.arrivedAt = Date.now();
+  if (status === 'delivered') updates.completedAt = Date.now();
+  await updateDoc(doc(db, 'tasks', taskId), updates);
+}
+
+// ─── Upload proof of delivery ─────────────────────────────────────
+export async function uploadProofOfDelivery(
+  taskId: string, imageUri: string, fileName: string
+): Promise<string> {
+  const response = await fetch(imageUri);
+  const blob = await response.blob();
+  const storageRef = ref(storage, `proofs/${taskId}/${fileName}`);
+  await uploadBytes(storageRef, blob);
+  return getDownloadURL(storageRef);
+}
+
+// ─── Upload signature ─────────────────────────────────────────────
+export async function uploadSignature(
+  taskId: string, signatureUri: string,
+): Promise<string> {
+  const response = await fetch(signatureUri);
+  const blob = await response.blob();
+  const storageRef = ref(storage, `signatures/${taskId}/${Date.now()}.png`);
+  await uploadBytes(storageRef, blob);
+  return getDownloadURL(storageRef);
+}
+
+// ─── Upload delivery document ─────────────────────────────────────
+export async function uploadDeliveryDocument(
+  taskId: string, imageUri: string,
+): Promise<string> {
+  const response = await fetch(imageUri);
+  const blob = await response.blob();
+  const storageRef = ref(storage, `documents/${taskId}/${Date.now()}.jpg`);
+  await uploadBytes(storageRef, blob);
+  return getDownloadURL(storageRef);
+}
+
+// ─── Complete task with full POD ──────────────────────────────────
+export async function completeTask(
+  taskId: string,
+  proofUrl: string,
+  lat: number,
+  lng: number,
+  signatureUrl?: string,
+  documentUrl?: string,
+  recipientConfirmedName?: string,
+  odometerReading?: number,
+): Promise<void> {
+  await updateDoc(doc(db, 'tasks', taskId), {
+    status: 'delivered' as TaskStatus,
+    proofOfDeliveryUrl: proofUrl,
+    signatureUrl: signatureUrl || null,
+    deliveryDocumentUrl: documentUrl || null,
+    recipientConfirmedName: recipientConfirmedName || null,
+    deliveryLatitude: lat,
+    deliveryLongitude: lng,
+    odometerAtDelivery: odometerReading || null,
+    completedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+}
+
+// ─── Delete task ──────────────────────────────────────────────────
+export async function deleteTask(taskId: string): Promise<void> {
+  await deleteDoc(doc(db, 'tasks', taskId));
+}
+
+// ─── Verify QR code scan ─────────────────────────────────────────
+export async function verifyQRScan(taskId: string, scannedCode: string): Promise<boolean> {
+  const task = await getTaskById(taskId);
+  if (!task || task.qrCode !== scannedCode) return false;
+  await updateDoc(doc(db, 'tasks', taskId), {
+    status: 'arrived' as TaskStatus,
+    arrivedAt: Date.now(),
+    scannedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  return true;
+}

@@ -1,0 +1,158 @@
+import React from 'react';
+import {
+  View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { useAuth } from '../../src/hooks/useAuth';
+import { useNotifications } from '../../src/hooks/useNotifications';
+import { markAsRead, markAllAsRead } from '../../src/services/notificationService';
+import { AppNotification } from '../../src/types';
+import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
+
+const TYPE_CONFIG: Record<string, { icon: string; color: string }> = {
+  task_assigned: { icon: '📦', color: COLORS.PRIMARY },
+  task_accepted: { icon: '✅', color: COLORS.SUCCESS },
+  task_rejected: { icon: '❌', color: COLORS.DANGER },
+  task_completed: { icon: '🎉', color: COLORS.SUCCESS },
+  trip_started: { icon: '🚚', color: COLORS.PRIMARY },
+  trip_completed: { icon: '🏁', color: COLORS.SUCCESS },
+  fuel_submitted: { icon: '⛽', color: COLORS.WARNING },
+  fuel_approved: { icon: '💰', color: COLORS.SUCCESS },
+  fuel_rejected: { icon: '🚫', color: COLORS.DANGER },
+  chat_message: { icon: '💬', color: COLORS.INFO },
+  approval: { icon: '🛡️', color: COLORS.WARNING },
+  general: { icon: '🔔', color: COLORS.GRAY_500 },
+};
+
+export default function NotificationsScreen() {
+  const router = useRouter();
+  const { user } = useAuth();
+  const { notifications, unreadCount } = useNotifications(user?.uid || '');
+
+  const handlePress = async (notification: AppNotification) => {
+    // Mark as read
+    if (!notification.read && notification.id) {
+      await markAsRead(notification.id);
+    }
+
+    // Navigate based on type
+    if (notification.data?.taskId) {
+      router.push(`/driver/taskDetails?taskId=${notification.data.taskId}`);
+    }
+  };
+
+  const handleMarkAllRead = async () => {
+    if (user?.uid) await markAllAsRead(user.uid);
+  };
+
+  const formatTime = (timestamp: number) => {
+    const diff = Date.now() - timestamp;
+    if (diff < 60000) return 'Just now';
+    if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+    if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+    return new Date(timestamp).toLocaleDateString();
+  };
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <Text style={styles.backBtn}>← Back</Text>
+        </TouchableOpacity>
+        <Text style={styles.title}>🔔 Notifications</Text>
+        {unreadCount > 0 ? (
+          <TouchableOpacity onPress={handleMarkAllRead}>
+            <Text style={styles.markAllBtn}>Read All</Text>
+          </TouchableOpacity>
+        ) : (
+          <View style={{ width: 60 }} />
+        )}
+      </View>
+
+      {unreadCount > 0 && (
+        <View style={styles.unreadBanner}>
+          <Text style={styles.unreadText}>🔴 {unreadCount} unread notification{unreadCount > 1 ? 's' : ''}</Text>
+        </View>
+      )}
+
+      <FlatList
+        data={notifications}
+        keyExtractor={n => n.id || String(n.createdAt)}
+        contentContainerStyle={styles.list}
+        renderItem={({ item }) => {
+          const config = TYPE_CONFIG[item.type] || TYPE_CONFIG.general;
+          return (
+            <TouchableOpacity
+              style={[styles.card, !item.read && styles.cardUnread]}
+              onPress={() => handlePress(item)}
+            >
+              <View style={[styles.iconCircle, { backgroundColor: config.color + '15' }]}>
+                <Text style={styles.icon}>{config.icon}</Text>
+              </View>
+              <View style={styles.cardContent}>
+                <View style={styles.cardTop}>
+                  <Text style={[styles.cardTitle, !item.read && styles.cardTitleUnread]} numberOfLines={1}>
+                    {item.title}
+                  </Text>
+                  <Text style={styles.cardTime}>{formatTime(item.createdAt)}</Text>
+                </View>
+                <Text style={styles.cardBody} numberOfLines={2}>{item.body}</Text>
+              </View>
+              {!item.read && <View style={styles.unreadDot} />}
+            </TouchableOpacity>
+          );
+        }}
+        ListEmptyComponent={
+          <View style={styles.empty}>
+            <Text style={styles.emptyIcon}>🔔</Text>
+            <Text style={styles.emptyText}>No notifications yet</Text>
+            <Text style={styles.emptySubtext}>You'll be notified when tasks are assigned</Text>
+          </View>
+        }
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: COLORS.BG_PRIMARY },
+  header: {
+    backgroundColor: COLORS.PRIMARY, paddingHorizontal: SPACING.XL,
+    paddingTop: SPACING.XXXL + SPACING.MD, paddingBottom: SPACING.LG,
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+  },
+  backBtn: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, fontWeight: '600' },
+  title: { fontSize: FONT_SIZES.XL, fontWeight: '700', color: COLORS.WHITE },
+  markAllBtn: { color: COLORS.ACCENT, fontSize: FONT_SIZES.SM, fontWeight: '700' },
+  unreadBanner: {
+    backgroundColor: COLORS.DANGER + '10', paddingVertical: SPACING.SM,
+    paddingHorizontal: SPACING.XL, borderBottomWidth: 1, borderBottomColor: COLORS.DANGER + '20',
+  },
+  unreadText: { fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.DANGER },
+  list: { padding: SPACING.XL },
+  card: {
+    flexDirection: 'row', alignItems: 'center',
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG, padding: SPACING.LG,
+    marginBottom: SPACING.SM, ...SHADOWS.SM,
+  },
+  cardUnread: { backgroundColor: COLORS.PRIMARY + '05', borderLeftWidth: 3, borderLeftColor: COLORS.PRIMARY },
+  iconCircle: {
+    width: 44, height: 44, borderRadius: 22,
+    justifyContent: 'center', alignItems: 'center', marginRight: SPACING.MD,
+  },
+  icon: { fontSize: 22 },
+  cardContent: { flex: 1 },
+  cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 },
+  cardTitle: { fontSize: FONT_SIZES.MD, fontWeight: '500', color: COLORS.GRAY_800, flex: 1 },
+  cardTitleUnread: { fontWeight: '700', color: COLORS.GRAY_900 },
+  cardTime: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_400, marginLeft: SPACING.SM },
+  cardBody: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, lineHeight: 18 },
+  unreadDot: {
+    width: 8, height: 8, borderRadius: 4,
+    backgroundColor: COLORS.PRIMARY, marginLeft: SPACING.SM,
+  },
+  empty: { alignItems: 'center', paddingVertical: SPACING.XXXL * 2 },
+  emptyIcon: { fontSize: 64, marginBottom: SPACING.MD },
+  emptyText: { fontSize: FONT_SIZES.XL, fontWeight: '700', color: COLORS.GRAY_500 },
+  emptySubtext: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_400, marginTop: SPACING.SM },
+});
