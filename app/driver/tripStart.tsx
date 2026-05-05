@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView,
+  Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -18,6 +18,7 @@ export default function TripStartScreen() {
   const [odometer, setOdometer] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const handleTakePhoto = async () => {
     try {
@@ -76,11 +77,7 @@ export default function TripStartScreen() {
       // 5. Start GPS tracking
       try { await startTrackingDriverLocation(user!.uid); } catch {}
 
-      Alert.alert(
-        '🚚 Trip Started!',
-        `Odometer: ${odometer} km\nGPS tracking is now active.\nDrive safely!`,
-        [{ text: 'OK', onPress: () => router.replace('/driver/dashboard') }],
-      );
+      setShowSuccessModal(true);
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to start trip');
     } finally {
@@ -177,6 +174,31 @@ export default function TripStartScreen() {
           </TouchableOpacity>
         </ScrollView>
       </KeyboardAvoidingView>
+
+      {/* Custom Success Modal */}
+      <Modal visible={showSuccessModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>🚚 Trip Started!</Text>
+            </View>
+            <View style={styles.modalBody}>
+               <Text style={styles.modalText}>Odometer: <Text style={{fontWeight:'700'}}>{odometer} km</Text></Text>
+               <Text style={styles.modalText}>GPS tracking is now active.</Text>
+               <Text style={styles.modalText}>Drive safely!</Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity 
+                style={styles.modalConfirmBtn} 
+                onPress={() => { setShowSuccessModal(false); router.replace('/driver/dashboard'); }}
+              >
+                <Text style={styles.modalConfirmText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -254,4 +276,21 @@ const styles = StyleSheet.create({
   },
   startBtnIcon: { fontSize: 24 },
   startBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.XL, fontWeight: '700' },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
+    padding: SPACING.XL, width: '85%',
+    borderWidth: 1, borderColor: COLORS.PRIMARY, ...SHADOWS.LG,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM, marginBottom: SPACING.LG },
+  modalTitle: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.GRAY_900 },
+  modalBody: { marginBottom: SPACING.XL },
+  modalText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_700, marginBottom: SPACING.XS },
+  modalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.LG },
+  modalConfirmBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalConfirmText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
 });

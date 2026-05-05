@@ -1,30 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator,
+  View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator, Image
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { getFuelExpensesByDriver } from '../../src/services/fuelService';
-import { FuelExpense } from '../../src/types';
+import { getActiveTrip } from '../../src/services/tripService';
+import { FuelExpense, TripSession } from '../../src/types';
 import { formatDate, formatCurrency } from '../../src/utils/helpers';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
-
-const STATUS_CONFIG = {
-  pending: { label: 'Pending', color: COLORS.WARNING, icon: '⏳' },
-  approved: { label: 'Approved', color: COLORS.SUCCESS, icon: '✅' },
-  rejected: { label: 'Rejected', color: COLORS.DANGER, icon: '❌' },
-};
 
 export default function FuelHistoryScreen() {
   const router = useRouter();
   const { user } = useAuth();
   const [expenses, setExpenses] = useState<FuelExpense[]>([]);
+  const [activeTrip, setActiveTrip] = useState<TripSession | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user?.uid) return;
     (async () => {
       try {
+        const trip = await getActiveTrip(user.uid);
+        setActiveTrip(trip);
         const data = await getFuelExpensesByDriver(user.uid);
         setExpenses(data);
       } catch (e) { console.error(e); }
@@ -32,8 +30,10 @@ export default function FuelHistoryScreen() {
     })();
   }, [user]);
 
-  const totalSpent = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + e.totalCost, 0);
-  const totalLitres = expenses.filter(e => e.status === 'approved').reduce((s, e) => s + e.litres, 0);
+  // If there's an active trip, show only fuel for that trip in the summary section
+  const summaryExpenses = activeTrip ? expenses.filter(e => e.tripId === activeTrip.id) : expenses;
+  const totalSpent = summaryExpenses.reduce((s, e) => s + e.totalCost, 0);
+  const totalLitres = summaryExpenses.reduce((s, e) => s + e.litres, 0);
 
   if (loading) {
     return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.PRIMARY} /></View>;
@@ -52,6 +52,11 @@ export default function FuelHistoryScreen() {
       </View>
 
       {/* Summary */}
+      {activeTrip && (
+        <Text style={{ textAlign: 'center', color: COLORS.GRAY_500, marginBottom: SPACING.SM, fontWeight: '600' }}>
+          Active Trip Fuel
+        </Text>
+      )}
       <View style={styles.summaryRow}>
         <View style={styles.summaryCard}>
           <Text style={styles.summaryLabel}>Total Spent</Text>
@@ -68,13 +73,14 @@ export default function FuelHistoryScreen() {
         keyExtractor={item => item.id || ''}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => {
-          const cfg = STATUS_CONFIG[item.status];
           return (
             <View style={styles.card}>
               <View style={styles.cardHeader}>
                 <Text style={styles.cardDate}>{formatDate(item.createdAt)}</Text>
-                <View style={[styles.statusBadge, { backgroundColor: cfg.color + '20' }]}>
-                  <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.icon} {cfg.label}</Text>
+                <View style={[styles.statusBadge, { backgroundColor: item.status === 'approved' ? COLORS.SUCCESS + '20' : COLORS.WARNING + '20' }]}>
+                  <Text style={[styles.statusText, { color: item.status === 'approved' ? COLORS.SUCCESS : COLORS.WARNING }]}>
+                    {item.status === 'approved' ? 'Accepted' : 'Pending'}
+                  </Text>
                 </View>
               </View>
               <View style={styles.cardBody}>
@@ -90,7 +96,7 @@ export default function FuelHistoryScreen() {
         }}
         ListEmptyComponent={
           <View style={styles.empty}>
-            <Text style={styles.emptyIcon}>⛽</Text>
+            <Image source={require('../../assets/icons/fuel.png')} style={{ width: 72, height: 72, marginBottom: SPACING.MD }} resizeMode="contain" />
             <Text style={styles.emptyText}>No fuel expenses yet</Text>
           </View>
         }
@@ -130,6 +136,5 @@ const styles = StyleSheet.create({
   cardOdo: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, marginTop: SPACING.SM },
   cardNotes: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_400, marginTop: SPACING.XS, fontStyle: 'italic' },
   empty: { alignItems: 'center', paddingVertical: SPACING.XXXL },
-  emptyIcon: { fontSize: 48, marginBottom: SPACING.MD },
   emptyText: { fontSize: FONT_SIZES.LG, fontWeight: '600', color: COLORS.GRAY_500 },
 });

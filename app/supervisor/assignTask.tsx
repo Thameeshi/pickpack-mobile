@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Alert, ActivityIndicator,
+  ScrollView, Alert, ActivityIndicator, Image
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
@@ -116,10 +116,13 @@ export default function AssignTaskScreen() {
     <View style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtnWrapper}>
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>{isEditing ? '✏️ Edit Task' : '➕ Create Task'}</Text>
+        <View style={styles.headerTitleContainer}>
+          {!isEditing && <Image source={require('../../assets/icons/new-trip.png')} style={styles.headerIcon} />}
+          <Text style={styles.title}>{isEditing ? '✏️ Edit Task' : 'Create Task'}</Text>
+        </View>
         <View style={{ width: 50 }} />
       </View>
 
@@ -306,12 +309,18 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.BG_PRIMARY },
   header: {
     backgroundColor: COLORS.PRIMARY, paddingHorizontal: SPACING.XL,
-    paddingTop: SPACING.XXXL + SPACING.MD, paddingBottom: SPACING.LG,
+    paddingTop: SPACING.XXXL + SPACING.MD, paddingBottom: SPACING.XL,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    borderBottomLeftRadius: 32, borderBottomRightRadius: 32,
+    marginBottom: SPACING.MD,
+    ...SHADOWS.MD,
   },
-  backBtn: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, fontWeight: '600' },
-  title: { fontSize: FONT_SIZES.XL, fontWeight: '700', color: COLORS.WHITE },
-  content: { flex: 1, padding: SPACING.XL },
+  backBtnWrapper: { width: 50, justifyContent: 'center' },
+  backBtn: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, fontWeight: '700' },
+  headerTitleContainer: { flexDirection: 'row', alignItems: 'center' },
+  headerIcon: { width: 26, height: 26, marginRight: SPACING.SM, resizeMode: 'contain' },
+  title: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.WHITE },
+  content: { flex: 1, paddingHorizontal: SPACING.XL },
   sectionTitle: {
     fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.GRAY_700,
     marginBottom: SPACING.SM, marginTop: SPACING.MD,

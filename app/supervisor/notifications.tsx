@@ -6,6 +6,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useNotifications } from '../../src/hooks/useNotifications';
 import { markAsRead, markAllAsRead } from '../../src/services/notificationService';
+import { getAllFuelExpenses } from '../../src/services/fuelService';
 import { AppNotification } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
@@ -27,13 +28,38 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string }> = {
 export default function SupervisorNotificationsScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { notifications, unreadCount } = useNotifications(user?.uid || '');
+  const { notifications: dbNotifications } = useNotifications(user?.uid || '');
+  const [fuelNotifications, setFuelNotifications] = React.useState<AppNotification[]>([]);
+
+  React.useEffect(() => {
+    if (!user?.uid) return;
+    (async () => {
+      const expenses = await getAllFuelExpenses();
+      const pending = expenses.filter(e => e.status === 'pending');
+      const mapped: AppNotification[] = pending.map(e => ({
+        id: `fuel_${e.id}`,
+        userId: user.uid,
+        type: 'fuel_submitted',
+        title: 'Fuel Approval Required',
+        body: `${e.driverName || 'A driver'} requested approval for ${e.litres}L of fuel (LKR ${e.totalCost.toFixed(0)})`,
+        createdAt: e.createdAt || Date.now(),
+        read: false,
+        data: { expenseId: e.id }
+      }));
+      setFuelNotifications(mapped);
+    })();
+  }, [user]);
+
+  const notifications = [...dbNotifications, ...fuelNotifications].sort((a, b) => b.createdAt - a.createdAt);
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   const handlePress = async (notification: AppNotification) => {
-    if (!notification.read && notification.id) {
+    if (!notification.read && notification.id && !notification.id.startsWith('fuel_')) {
       await markAsRead(notification.id);
     }
-    if (notification.data?.taskId) {
+    if (notification.type === 'fuel_submitted') {
+      router.push('/supervisor/fuelApprovals');
+    } else if (notification.data?.taskId) {
       router.push(`/supervisor/assignTask?taskId=${notification.data.taskId}`);
     }
   };

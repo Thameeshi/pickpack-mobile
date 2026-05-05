@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Alert, ActivityIndicator, Image, ScrollView,
+  Alert, ActivityIndicator, Image, ScrollView, Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -21,6 +21,7 @@ export default function TripEndScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingTrip, setLoadingTrip] = useState(true);
   const [tripSummary, setTripSummary] = useState<TripSession | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -56,52 +57,45 @@ export default function TripEndScreen() {
       return;
     }
 
-    Alert.alert(
-      '🏁 End Trip?',
-      `Start: ${activeTrip?.startOdometer?.toLocaleString()} km\nEnd: ${Number(odometer).toLocaleString()} km\nDistance: ${(Number(odometer) - (activeTrip?.startOdometer || 0)).toLocaleString()} km`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End Trip', style: 'destructive', onPress: async () => {
-            setLoading(true);
-            try {
-              let loc = undefined;
-              try {
-                const position = await getCurrentLocation();
-                loc = { lat: position.coords.latitude, lng: position.coords.longitude };
-              } catch {}
+    setShowConfirmModal(true);
+  };
 
-              // 1. Save odometer reading
-              const readingId = await addOdometerReading({
-                driverId: user!.uid,
-                driverName: profile?.name || '',
-                reading: Number(odometer),
-                type: 'trip_end',
-                location: loc,
-                tripId: activeTrip?.id,
-                timestamp: Date.now(),
-                verified: false,
-              });
+  const onConfirmEndTrip = async () => {
+    setLoading(true);
+    try {
+      let loc = undefined;
+      try {
+        const position = await getCurrentLocation();
+        loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+      } catch {}
 
-              if (photo) {
-                try { await uploadOdometerPhoto(readingId, photo); } catch {}
-              }
+      // 1. Save odometer reading
+      const readingId = await addOdometerReading({
+        driverId: user!.uid,
+        driverName: profile?.name || '',
+        reading: Number(odometer),
+        type: 'trip_end',
+        location: loc,
+        tripId: activeTrip?.id,
+        timestamp: Date.now(),
+        verified: false,
+      });
 
-              // 2. End the trip
-              const summary = await endTrip(activeTrip!.id!, Number(odometer));
-              setTripSummary(summary);
+      if (photo) {
+        try { await uploadOdometerPhoto(readingId, photo); } catch {}
+      }
 
-              // 3. Stop GPS tracking
-              stopTrackingDriverLocation();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to end trip');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ],
-    );
+      // 2. End the trip
+      const summary = await endTrip(activeTrip!.id!, Number(odometer));
+      setTripSummary(summary);
+
+      // 3. Stop GPS tracking
+      stopTrackingDriverLocation();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to end trip');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loadingTrip) {
@@ -184,11 +178,14 @@ export default function TripEndScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { backgroundColor: COLORS.DANGER }]}>
+      <View style={[styles.header, { backgroundColor: COLORS.PRIMARY }]}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>🏁 End Trip</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 24, height: 24, tintColor: COLORS.WHITE }} />
+          <Text style={styles.title}>End Trip</Text>
+        </View>
         <View style={{ width: 50 }} />
       </View>
 
@@ -261,12 +258,38 @@ export default function TripEndScreen() {
             <ActivityIndicator color={COLORS.WHITE} />
           ) : (
             <>
-              <Text style={styles.endBtnIcon}>🏁</Text>
+              <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 28, height: 28, tintColor: COLORS.WHITE }} />
               <Text style={styles.endBtnText}>End Trip</Text>
             </>
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Custom Confirmation Modal */}
+      <Modal visible={showConfirmModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 24, height: 24, tintColor: COLORS.PRIMARY }} />
+              <Text style={styles.modalTitle}>End Trip?</Text>
+            </View>
+            <View style={styles.modalBody}>
+               <Text style={styles.modalText}>Start: <Text style={{fontWeight:'700'}}>{activeTrip.startOdometer?.toLocaleString()} km</Text></Text>
+               <Text style={styles.modalText}>End: <Text style={{fontWeight:'700'}}>{Number(odometer).toLocaleString()} km</Text></Text>
+               <Text style={styles.modalText}>Distance: <Text style={{fontWeight:'700'}}>{(Number(odometer) - (activeTrip.startOdometer || 0)).toLocaleString()} km</Text></Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowConfirmModal(false)}>
+                <Text style={styles.modalCancelText}>CANCEL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirmBtn} onPress={() => { setShowConfirmModal(false); onConfirmEndTrip(); }}>
+                <Text style={styles.modalConfirmText}>END TRIP</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -334,11 +357,10 @@ const styles = StyleSheet.create({
   photoPlaceholderIcon: { fontSize: 48, marginBottom: SPACING.SM },
   photoPlaceholderText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_500 },
   endBtn: {
-    backgroundColor: COLORS.DANGER, paddingVertical: SPACING.LG,
+    backgroundColor: COLORS.PRIMARY, paddingVertical: SPACING.LG,
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
     flexDirection: 'row', justifyContent: 'center', gap: SPACING.SM, ...SHADOWS.MD,
   },
-  endBtnIcon: { fontSize: 24 },
   endBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.XL, fontWeight: '700' },
   // Summary styles
   summaryCard: {
@@ -368,4 +390,23 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
   },
   doneBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
+    padding: SPACING.XL, width: '85%',
+    borderWidth: 1, borderColor: COLORS.PRIMARY, ...SHADOWS.LG,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM, marginBottom: SPACING.LG },
+  modalTitle: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.GRAY_900 },
+  modalBody: { marginBottom: SPACING.XL },
+  modalText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_700, marginBottom: SPACING.XS },
+  modalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.LG },
+  modalCancelBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalCancelText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
+  modalConfirmBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalConfirmText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
 });
