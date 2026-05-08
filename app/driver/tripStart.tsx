@@ -6,7 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
-import { startTrip } from '../../src/services/tripService';
+import { startTrip, linkAcceptedTasksToTrip } from '../../src/services/tripService';
 import { addOdometerReading, uploadOdometerPhoto } from '../../src/services/fuelService';
 import { getCurrentLocation } from '../../src/services/locationService';
 import { startTrackingDriverLocation } from '../../src/services/locationService';
@@ -19,6 +19,7 @@ export default function TripStartScreen() {
   const [photo, setPhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [linkedTaskCount, setLinkedTaskCount] = useState(0);
 
   const handleTakePhoto = async () => {
     try {
@@ -74,7 +75,13 @@ export default function TripStartScreen() {
         try { await uploadOdometerPhoto(readingId, photo); } catch {}
       }
 
-      // 5. Start GPS tracking
+      // 5. Auto-link all accepted/assigned tasks to this trip
+      try {
+        const linkedIds = await linkAcceptedTasksToTrip(user!.uid, tripId);
+        setLinkedTaskCount(linkedIds.length);
+      } catch {}
+
+      // 6. Start GPS tracking
       try { await startTrackingDriverLocation(user!.uid); } catch {}
 
       setShowSuccessModal(true);
@@ -184,6 +191,9 @@ export default function TripStartScreen() {
             </View>
             <View style={styles.modalBody}>
                <Text style={styles.modalText}>Odometer: <Text style={{fontWeight:'700'}}>{odometer} km</Text></Text>
+               {linkedTaskCount > 0 && (
+                 <Text style={styles.modalText}>📦 <Text style={{fontWeight:'700'}}>{linkedTaskCount} task{linkedTaskCount > 1 ? 's' : ''}</Text> linked to this trip</Text>
+               )}
                <Text style={styles.modalText}>GPS tracking is now active.</Text>
                <Text style={styles.modalText}>Drive safely!</Text>
             </View>

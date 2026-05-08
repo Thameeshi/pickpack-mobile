@@ -66,10 +66,11 @@ export default function SupervisorDashboardScreen() {
   const ACTIONS = [
     { id: 'new', label: 'New Trip', image: require('../../assets/icons/new-trip.png'), route: '/supervisor/assignTask' },
     { id: 'track', label: 'Track', image: require('../../assets/icons/track.png'), route: '/supervisor/driverTracking' },
+    { id: 'add-driver', label: 'Add Driver', image: require('../../assets/icons/profile.png'), route: '/supervisor/addDriver' },
     { id: 'fuel', label: 'Fuel', image: require('../../assets/icons/fuel.png'), route: '/supervisor/fuelApprovals' },
     { id: 'approve', label: 'Approve', image: require('../../assets/icons/approve.png'), route: '/supervisor/approvals' },
     { id: 'chat', label: 'Chat', image: require('../../assets/icons/chat.png'), route: '/supervisor/chatList' },
-    { id: 'profile', label: 'Profile', image: require('../../assets/icons/profile.png'), route: '/supervisor/profile' },
+    { id: 'trip-details', label: 'Trip Details', image: require('../../assets/icons/recent-trip.png'), route: '/supervisor/tripDetails' },
   ];
 
   return (

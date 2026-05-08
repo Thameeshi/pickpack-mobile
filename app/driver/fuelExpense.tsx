@@ -33,6 +33,10 @@ export default function FuelExpenseScreen() {
     (async () => {
       const trip = await getActiveTrip(user.uid);
       setActiveTrip(trip);
+      // Pre-fill odometer from active trip's start reading as a helpful baseline
+      if (trip?.startOdometer && !odometerReading) {
+        setOdometerReading(String(trip.startOdometer));
+      }
     })();
   }, [user]);
 

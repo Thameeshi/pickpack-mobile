@@ -8,7 +8,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
 import {
   uploadProofOfDelivery, uploadSignature, uploadDeliveryDocument,
-  completeTask,
+  completeTask, getTaskById,
 } from '../../src/services/taskService';
 import { addTaskToTrip, getActiveTrip } from '../../src/services/tripService';
 import { notifyDeliveryCompleted } from '../../src/services/notificationService';
@@ -82,8 +82,13 @@ export default function ProofOfDeliveryScreen() {
 
     setUploading(true);
     try {
-      // 1. Upload delivery photo
-      const proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
+      // 1. Upload delivery photo (graceful — don't block completion)
+      let proofUrl = '';
+      try {
+        proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
+      } catch (uploadErr) {
+        console.log('Photo upload failed, continuing without it:', uploadErr);
+      }
 
       // 2. Capture and upload signature
       let signatureUrl: string | undefined;
@@ -94,7 +99,7 @@ export default function ProofOfDeliveryScreen() {
           });
           signatureUrl = await uploadSignature(taskId!, signatureUri);
         } catch (e) {
-          console.log('Signature capture failed, continuing:', e);
+          console.log('Signature capture/upload failed, continuing:', e);
         }
       }
 
@@ -103,13 +108,15 @@ export default function ProofOfDeliveryScreen() {
       if (document) {
         try {
           documentUrl = await uploadDeliveryDocument(taskId!, document);
-        } catch {}
+        } catch {
+          console.log('Document upload failed, continuing without it');
+        }
       }
 
-      // 4. Complete the task
+      // 4. Complete the task (this is the critical operation)
       await completeTask(
         taskId!,
-        proofUrl,
+        proofUrl || 'upload_failed',
         location?.coords?.latitude || 0,
         location?.coords?.longitude || 0,
         signatureUrl,
@@ -135,9 +142,44 @@ export default function ProofOfDeliveryScreen() {
         } catch {}
       }
 
-      Alert.alert('✅ Delivered!', 'Proof of delivery uploaded successfully.', [
-        { text: 'OK', onPress: () => router.replace('/driver/dashboard') },
-      ]);
+      // 7. Check if there are more pending tasks to complete
+      let nextPendingTask: string | null = null;
+      let nextSupervisorId: string | null = null;
+      let pendingCount = 0;
+      try {
+        const trip = await getActiveTrip(user!.uid);
+        if (trip?.taskIds && trip.taskIds.length > 0) {
+          for (const tid of trip.taskIds) {
+            if (tid === taskId) continue; // skip the one we just completed
+            const t = await getTaskById(tid);
+            if (t && t.status !== 'delivered' && t.status !== 'failed') {
+              pendingCount++;
+              if (!nextPendingTask) {
+                nextPendingTask = tid;
+                nextSupervisorId = t.supervisorId || '';
+              }
+            }
+          }
+        }
+      } catch {}
+
+      if (nextPendingTask && pendingCount > 0) {
+        Alert.alert(
+          '✅ Delivered!',
+          `Proof of delivery uploaded. You still have ${pendingCount} more pending delivery${pendingCount > 1 ? 'ies' : ''}. Continue to the next one?`,
+          [
+            { text: 'Dashboard', style: 'cancel', onPress: () => router.replace('/driver/dashboard') },
+            {
+              text: `Next (${pendingCount} left)`,
+              onPress: () => router.replace(`/driver/proofOfDelivery?taskId=${nextPendingTask}&supervisorId=${nextSupervisorId || ''}`),
+            },
+          ]
+        );
+      } else {
+        Alert.alert('✅ All Done!', 'All deliveries completed successfully!', [
+          { text: 'OK', onPress: () => router.replace('/driver/dashboard') },
+        ]);
+      }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Upload failed');
     } finally {

@@ -6,6 +6,9 @@ import { db, storage } from './firebase';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Task, TaskCreatePayload, TaskStatus } from '../types';
 import { notifyTaskAssigned } from './notificationService';
+import { isDriverOnTrip } from './tripService';
+
+const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
 // ─── Generate unique QR code for a task ────────────────────────────
 function generateQRCode(taskId: string): string {
@@ -16,15 +19,18 @@ function generateQRCode(taskId: string): string {
 
 // ─── Create a new task ─────────────────────────────────────────────
 export async function createTask(payload: TaskCreatePayload): Promise<string> {
+  const now = Date.now();
   const taskData: Omit<Task, 'id'> = {
     ...payload,
     status: payload.assignedDriverId ? 'assigned' : 'pending',
     priority: payload.priority || 'MEDIUM',
     qrCode: '', // Will be set after we get the doc ID
     driverAccepted: false,
+    assignedAt: payload.assignedDriverId ? now : undefined,
+    approvalDeadline: payload.assignedDriverId ? now + APPROVAL_TIMEOUT_MS : undefined,
     offlineSynced: true,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
+    createdAt: now,
+    updatedAt: now,
   };
 
   const docRef = await addDoc(collection(db, 'tasks'), taskData);
@@ -35,6 +41,18 @@ export async function createTask(payload: TaskCreatePayload): Promise<string> {
 
   // Send notification to assigned driver
   if (payload.assignedDriverId) {
+    try {
+      // Auto-link to active trip if driver is currently on one
+      const { getActiveTrip, addTaskToTrip } = require('./tripService');
+      const activeTrip = await getActiveTrip(payload.assignedDriverId);
+      if (activeTrip?.id) {
+        await updateDoc(doc(db, 'tasks', docRef.id), { tripId: activeTrip.id });
+        await addTaskToTrip(activeTrip.id, docRef.id);
+      }
+    } catch (e) {
+      console.log('Failed to link new task to active trip:', e);
+    }
+
     try {
       await notifyTaskAssigned(
         payload.assignedDriverId,
@@ -97,14 +115,31 @@ export async function assignTaskToDriver(
   taskId: string, driverId: string, driverName?: string,
   supervisorId?: string, supervisorName?: string,
 ): Promise<void> {
+  const now = Date.now();
   const task = await getTaskById(taskId);
-  await updateDoc(doc(db, 'tasks', taskId), {
+  
+  const updates: Partial<Task> = {
     assignedDriverId: driverId,
     assignedDriverName: driverName || '',
     status: 'assigned' as TaskStatus,
     driverAccepted: false,
-    updatedAt: Date.now(),
-  });
+    assignedAt: now,
+    approvalDeadline: now + APPROVAL_TIMEOUT_MS,
+    updatedAt: now,
+  };
+
+  try {
+    const { getActiveTrip, addTaskToTrip } = require('./tripService');
+    const activeTrip = await getActiveTrip(driverId);
+    if (activeTrip?.id) {
+      updates.tripId = activeTrip.id;
+      await addTaskToTrip(activeTrip.id, taskId);
+    }
+  } catch (e) {
+    console.log('Failed to auto-link task to trip:', e);
+  }
+
+  await updateDoc(doc(db, 'tasks', taskId), updates);
 
   // Send notification
   try {
@@ -147,16 +182,46 @@ export async function updateTaskStatus(
   const updates: Partial<Task> = { status, updatedAt: Date.now(), ...extras };
   if (status === 'arrived') updates.arrivedAt = Date.now();
   if (status === 'delivered') updates.completedAt = Date.now();
+  
+  // Auto-link task to active trip when starting delivery
+  if (status === 'in_progress') {
+    const task = await getTaskById(taskId);
+    if (task?.assignedDriverId && !task.tripId) {
+      try {
+        // Import dynamically to avoid circular deps
+        const { getActiveTrip, addTaskToTrip } = require('./tripService');
+        const activeTrip = await getActiveTrip(task.assignedDriverId);
+        if (activeTrip?.id) {
+          updates.tripId = activeTrip.id;
+          await addTaskToTrip(activeTrip.id, taskId);
+        }
+      } catch (e) {
+        console.log('Auto-link task to trip failed:', e);
+      }
+    }
+  }
+  
   await updateDoc(doc(db, 'tasks', taskId), updates);
+}
+
+// ─── Helper: convert local URI to blob (React Native compatible) ──
+async function uriToBlob(uri: string): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.onload = () => resolve(xhr.response as Blob);
+    xhr.onerror = () => reject(new Error('Failed to convert image to blob'));
+    xhr.responseType = 'blob';
+    xhr.open('GET', uri, true);
+    xhr.send(null);
+  });
 }
 
 // ─── Upload proof of delivery ─────────────────────────────────────
 export async function uploadProofOfDelivery(
   taskId: string, imageUri: string, fileName: string
 ): Promise<string> {
-  const response = await fetch(imageUri);
-  const blob = await response.blob();
-  const storageRef = ref(storage, `proofs/${taskId}/${fileName}`);
+  const blob = await uriToBlob(imageUri);
+  const storageRef = ref(storage, `proofOfDelivery/${taskId}/${fileName}`);
   await uploadBytes(storageRef, blob);
   return getDownloadURL(storageRef);
 }
@@ -165,8 +230,7 @@ export async function uploadProofOfDelivery(
 export async function uploadSignature(
   taskId: string, signatureUri: string,
 ): Promise<string> {
-  const response = await fetch(signatureUri);
-  const blob = await response.blob();
+  const blob = await uriToBlob(signatureUri);
   const storageRef = ref(storage, `signatures/${taskId}/${Date.now()}.png`);
   await uploadBytes(storageRef, blob);
   return getDownloadURL(storageRef);
@@ -176,8 +240,7 @@ export async function uploadSignature(
 export async function uploadDeliveryDocument(
   taskId: string, imageUri: string,
 ): Promise<string> {
-  const response = await fetch(imageUri);
-  const blob = await response.blob();
+  const blob = await uriToBlob(imageUri);
   const storageRef = ref(storage, `documents/${taskId}/${Date.now()}.jpg`);
   await uploadBytes(storageRef, blob);
   return getDownloadURL(storageRef);

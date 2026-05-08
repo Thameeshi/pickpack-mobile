@@ -6,8 +6,9 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { getTaskById, updateTaskStatus, acceptTask, rejectTask } from '../../src/services/taskService';
+import { getActiveTrip } from '../../src/services/tripService';
 import { notifyTaskResponse } from '../../src/services/notificationService';
-import { Task, TaskStatus, TASK_STATUS_LABELS, TASK_STATUS_ORDER } from '../../src/types';
+import { Task, TaskStatus, TripSession, TASK_STATUS_LABELS, TASK_STATUS_ORDER } from '../../src/types';
 import { formatDateTime } from '../../src/utils/helpers';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
@@ -35,6 +36,8 @@ export default function TaskDetailsScreen() {
   const [actionLoading, setActionLoading] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
   const [showRejectInput, setShowRejectInput] = useState(false);
+  const [activeTrip, setActiveTrip] = useState<TripSession | null>(null);
+  const [timeRemaining, setTimeRemaining] = useState<number | null>(null); // seconds remaining for approval
 
   const loadTask = async () => {
     if (!taskId) return;
@@ -50,7 +53,68 @@ export default function TaskDetailsScreen() {
 
   useEffect(() => { loadTask(); }, [taskId]);
 
+  // Load active trip to show trip connection info
+  useEffect(() => {
+    if (user?.uid) {
+      getActiveTrip(user.uid).then(setActiveTrip).catch(() => {});
+    }
+  }, [user?.uid]);
+
+  // Countdown timer for 30-minute approval deadline
+  useEffect(() => {
+    if (!task?.approvalDeadline || task.status !== 'assigned' || task.driverAccepted) {
+      setTimeRemaining(null);
+      return;
+    }
+
+    const tick = () => {
+      const remaining = Math.max(0, Math.floor((task.approvalDeadline! - Date.now()) / 1000));
+      setTimeRemaining(remaining);
+
+      // Auto-reject when time expires
+      if (remaining <= 0) {
+        (async () => {
+          try {
+            await rejectTask(taskId!, 'Auto-rejected: 30-minute approval deadline expired');
+            if (task.supervisorId) {
+              await notifyTaskResponse(
+                task.supervisorId,
+                profile?.name || 'Driver',
+                taskId!,
+                false,
+                'Auto-rejected: approval deadline expired',
+              );
+            }
+            await loadTask();
+            Alert.alert('⏰ Time Expired', 'This task was automatically unassigned because the 30-minute approval deadline passed.');
+          } catch {}
+        })();
+      }
+    };
+
+    tick(); // run immediately
+    const interval = setInterval(tick, 1000);
+    return () => clearInterval(interval);
+  }, [task?.approvalDeadline, task?.status, task?.driverAccepted]);
+
   const handleStatusUpdate = async (newStatus: TaskStatus) => {
+    // Warn if starting delivery without an active trip
+    if (newStatus === 'in_progress' && !activeTrip) {
+      Alert.alert(
+        '⚠️ No Active Trip',
+        'You haven\'t started a trip yet. Start a trip first to link this delivery to your trip for odometer, fuel, and map tracking.',
+        [
+          { text: 'Start Trip', onPress: () => router.push('/driver/tripStart') },
+          {
+            text: 'Continue Anyway',
+            style: 'destructive',
+            onPress: () => performStatusUpdate(newStatus),
+          },
+        ]
+      );
+      return;
+    }
+
     const messages: Record<string, string> = {
       in_progress: 'Start this delivery?',
       arrived: 'Confirm you have arrived at the delivery location?',
@@ -62,25 +126,29 @@ export default function TaskDetailsScreen() {
       messages[newStatus] || `Change status to ${TASK_STATUS_LABELS[newStatus]}?`,
       [
         { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Confirm',
-          onPress: async () => {
-            setActionLoading(true);
-            try {
-              await updateTaskStatus(taskId!, newStatus);
-              await loadTask();
-              if (newStatus === 'in_progress') {
-                Alert.alert('🚚 Delivery Started', 'Drive safely!');
-              }
-            } catch (e: any) {
-              Alert.alert('Error', e.message);
-            } finally {
-              setActionLoading(false);
-            }
-          },
-        },
+        { text: 'Confirm', onPress: () => performStatusUpdate(newStatus) },
       ]
     );
+  };
+
+  const performStatusUpdate = async (newStatus: TaskStatus) => {
+    setActionLoading(true);
+    try {
+      await updateTaskStatus(taskId!, newStatus);
+      await loadTask();
+      // Refresh active trip to show the link
+      if (user?.uid) {
+        const trip = await getActiveTrip(user.uid);
+        setActiveTrip(trip);
+      }
+      if (newStatus === 'in_progress') {
+        Alert.alert('🚚 Delivery Started', activeTrip ? 'Linked to your active trip. Drive safely!' : 'Drive safely!');
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    } finally {
+      setActionLoading(false);
+    }
   };
 
   const handleCallRecipient = () => {
@@ -248,6 +316,47 @@ export default function TaskDetailsScreen() {
           )}
         </View>
 
+        {/* Trip Connection Info */}
+        {task.tripId && activeTrip && (
+          <View style={styles.tripLinkBanner}>
+            <Text style={styles.tripLinkIcon}>🔗</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.tripLinkTitle}>Linked to Active Trip</Text>
+              <Text style={styles.tripLinkText}>
+                Start Odo: {activeTrip.startOdometer?.toLocaleString()} km • {activeTrip.taskIds?.length || 0} tasks
+              </Text>
+            </View>
+            <TouchableOpacity onPress={() => router.push('/driver/map')} style={styles.tripLinkMapBtn}>
+              <Text style={styles.tripLinkMapText}>🗺️</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
+        {/* No trip warning for accepted tasks */}
+        {!activeTrip && (task.status === 'accepted' || (task.status === 'assigned' && task.driverAccepted)) && (
+          <TouchableOpacity
+            style={styles.noTripWarning}
+            onPress={() => router.push('/driver/tripStart')}
+          >
+            <Text style={styles.noTripWarningIcon}>⚠️</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.noTripWarningTitle}>No Active Trip</Text>
+              <Text style={styles.noTripWarningText}>Start a trip to link odometer, fuel & map tracking</Text>
+            </View>
+            <Text style={styles.noTripWarningArrow}>→</Text>
+          </TouchableOpacity>
+        )}
+
+        {/* Quick Map Access for in-progress tasks */}
+        {(task.status === 'in_progress' || task.status === 'arrived') && (
+          <TouchableOpacity
+            style={styles.mapQuickBtn}
+            onPress={() => router.push('/driver/map')}
+          >
+            <Text style={styles.mapQuickText}>🗺️ View Live Map</Text>
+          </TouchableOpacity>
+        )}
+
         {/* Action Buttons */}
         {task.status !== 'delivered' && task.status !== 'failed' && (
           <View style={styles.actionsSection}>
@@ -261,6 +370,36 @@ export default function TaskDetailsScreen() {
                     <Text style={styles.assignedBannerText}>Please accept or reject this delivery</Text>
                   </View>
                 </View>
+
+                {/* 30-Minute Countdown Timer */}
+                {timeRemaining !== null && timeRemaining > 0 && (
+                  <View style={[
+                    styles.timerBanner,
+                    timeRemaining < 300 && styles.timerBannerUrgent, // Under 5 min = red
+                  ]}>
+                    <Text style={styles.timerIcon}>{timeRemaining < 300 ? '🔴' : '⏱️'}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[
+                        styles.timerTitle,
+                        timeRemaining < 300 && { color: COLORS.DANGER },
+                      ]}>
+                        {timeRemaining < 300 ? 'Time Running Out!' : 'Approval Deadline'}
+                      </Text>
+                      <Text style={[
+                        styles.timerText,
+                        timeRemaining < 300 && { color: COLORS.DANGER },
+                      ]}>
+                        Respond within {Math.floor(timeRemaining / 60)}:{String(timeRemaining % 60).padStart(2, '0')} or task will be auto-rejected
+                      </Text>
+                    </View>
+                    <Text style={[
+                      styles.timerCount,
+                      timeRemaining < 300 && { color: COLORS.DANGER },
+                    ]}>
+                      {Math.floor(timeRemaining / 60)}:{String(timeRemaining % 60).padStart(2, '0')}
+                    </Text>
+                  </View>
+                )}
 
                 <TouchableOpacity
                   style={[styles.actionBtn, { backgroundColor: COLORS.SUCCESS }]}
@@ -502,10 +641,62 @@ const styles = StyleSheet.create({
   assignedBannerIcon: { fontSize: 32, marginRight: SPACING.MD },
   assignedBannerTitle: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.GRAY_900 },
   assignedBannerText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, marginTop: 2 },
+
+  // Timer
+  timerBanner: {
+    backgroundColor: COLORS.INFO + '10', borderRadius: RADIUS.LG,
+    padding: SPACING.MD, flexDirection: 'row', alignItems: 'center',
+    marginBottom: SPACING.SM, borderWidth: 1.5, borderColor: COLORS.INFO + '30',
+  },
+  timerBannerUrgent: {
+    backgroundColor: COLORS.DANGER + '10',
+    borderColor: COLORS.DANGER + '30',
+  },
+  timerIcon: { fontSize: 22, marginRight: SPACING.MD },
+  timerTitle: { fontSize: FONT_SIZES.SM, fontWeight: '700', color: COLORS.INFO },
+  timerText: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 1 },
+  timerCount: {
+    fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.INFO,
+    fontVariant: ['tabular-nums'] as any,
+  },
   rejectSection: { gap: SPACING.SM },
   rejectInput: {
     backgroundColor: COLORS.WHITE, borderWidth: 1.5, borderColor: COLORS.GRAY_200,
     borderRadius: RADIUS.LG, paddingHorizontal: SPACING.LG, paddingVertical: SPACING.MD,
     fontSize: FONT_SIZES.MD, color: COLORS.GRAY_900, minHeight: 60,
   },
+
+  // Trip connection
+  tripLinkBanner: {
+    backgroundColor: COLORS.SUCCESS + '10', borderRadius: RADIUS.LG,
+    padding: SPACING.LG, flexDirection: 'row', alignItems: 'center',
+    marginBottom: SPACING.MD, borderWidth: 1, borderColor: COLORS.SUCCESS + '25',
+  },
+  tripLinkIcon: { fontSize: 22, marginRight: SPACING.MD },
+  tripLinkTitle: { fontSize: FONT_SIZES.SM, fontWeight: '700', color: COLORS.SUCCESS },
+  tripLinkText: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 2 },
+  tripLinkMapBtn: {
+    width: 40, height: 40, borderRadius: 20,
+    backgroundColor: COLORS.SUCCESS + '15', justifyContent: 'center', alignItems: 'center',
+  },
+  tripLinkMapText: { fontSize: 20 },
+
+  // No trip warning
+  noTripWarning: {
+    backgroundColor: COLORS.WARNING + '10', borderRadius: RADIUS.LG,
+    padding: SPACING.LG, flexDirection: 'row', alignItems: 'center',
+    marginBottom: SPACING.MD, borderWidth: 1, borderColor: COLORS.WARNING + '25',
+  },
+  noTripWarningIcon: { fontSize: 22, marginRight: SPACING.MD },
+  noTripWarningTitle: { fontSize: FONT_SIZES.SM, fontWeight: '700', color: COLORS.WARNING },
+  noTripWarningText: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 2 },
+  noTripWarningArrow: { fontSize: 18, color: COLORS.WARNING, fontWeight: '700' },
+
+  // Map quick button
+  mapQuickBtn: {
+    backgroundColor: COLORS.PRIMARY + '10', borderRadius: RADIUS.LG,
+    padding: SPACING.MD, alignItems: 'center', marginBottom: SPACING.MD,
+    borderWidth: 1, borderColor: COLORS.PRIMARY + '20',
+  },
+  mapQuickText: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.PRIMARY },
 });

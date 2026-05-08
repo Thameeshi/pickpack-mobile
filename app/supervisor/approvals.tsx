@@ -46,13 +46,13 @@ export default function ApprovalsScreen() {
   };
 
   useEffect(() => {
-    if (profile?.role !== 'superadmin') {
-      Alert.alert('Access Denied', 'Only super admins can access this page');
+    if (profile?.role !== 'superadmin' && profile?.role !== 'supervisor') {
+      Alert.alert('Access Denied', 'Only supervisors and super admins can access this page');
       router.back();
       return;
     }
     loadUsers();
-  }, []);
+  }, [profile]);
 
   const handleAction = (userProfile: UserProfile, status: AccountStatus) => {
     const action = status === 'approved' ? 'approve' : status === 'suspended' ? 'suspend' : 'reject';

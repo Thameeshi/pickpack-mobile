@@ -149,7 +149,9 @@ service cloud.firestore {
       // Recipients can update their own notifications (mark as read)
       allow update: if isSignedIn() && resource.data.recipientId == request.auth.uid;
 
-      allow delete: if isSuperAdmin();
+      // Recipients can delete their own notifications, superadmins can delete any
+      allow delete: if (isSignedIn() && resource.data.recipientId == request.auth.uid)
+                    || isSuperAdmin();
     }
 
     // ─── Reports ──────────────────────────────────────────────────

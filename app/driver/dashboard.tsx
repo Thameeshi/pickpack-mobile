@@ -217,7 +217,7 @@ export default function DriverDashboardScreen() {
                 <Image source={require('../../assets/icons/qr-scan.png')} style={styles.gridImageIcon} />
                 <Text style={styles.gridCardLabel}>QR Scan</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.gridCard} onPress={() => console.log('Navigate to Map')}>
+              <TouchableOpacity style={styles.gridCard} onPress={() => router.push('/driver/map')}>
                 <Image source={require('../../assets/icons/track.png')} style={styles.gridImageIcon} />
                 <Text style={styles.gridCardLabel}>Map View</Text>
               </TouchableOpacity>
@@ -256,48 +256,74 @@ export default function DriverDashboardScreen() {
         ListFooterComponent={
           <>
             {/* Assigned trips list */}
-            {assignedTrips.map(trip => (
-              <TouchableOpacity
-                key={trip.id}
-                style={styles.tripCard}
-                onPress={() => router.push(`/driver/taskDetails?taskId=${trip.id}`)}
-                activeOpacity={0.7}
-              >
-                <View style={styles.tripCardHeader}>
-                  <View style={[styles.priorityBadge, {
-                    backgroundColor: trip.priority === 'HIGH' ? COLORS.DANGER
-                      : trip.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS
-                  }]}>
-                    <Text style={styles.priorityText}>{trip.priority}</Text>
-                  </View>
-                  <View style={[styles.statusChip, { backgroundColor: COLORS.PRIMARY_LIGHT + '20' }]}>
-                    <Text style={[styles.statusChipText, { color: COLORS.PRIMARY_LIGHT }]}>📌 Assigned</Text>
-                  </View>
-                </View>
+            {assignedTrips.map(trip => {
+              // Calculate deadline remaining
+              const deadlineRemaining = trip.approvalDeadline
+                ? Math.max(0, Math.floor((trip.approvalDeadline - Date.now()) / 1000))
+                : null;
+              const deadlineMin = deadlineRemaining !== null ? Math.floor(deadlineRemaining / 60) : null;
+              const deadlineSec = deadlineRemaining !== null ? deadlineRemaining % 60 : null;
+              const isUrgent = deadlineRemaining !== null && deadlineRemaining < 300;
 
-                <View style={styles.tripCardRoute}>
-                  <View style={styles.tripRouteRow}>
-                    <View style={[styles.routeDotSmall, { backgroundColor: COLORS.PRIMARY }]} />
-                    <Text style={styles.tripRouteText} numberOfLines={1}>{trip.pickupLocation}</Text>
+              return (
+                <TouchableOpacity
+                  key={trip.id}
+                  style={styles.tripCard}
+                  onPress={() => router.push(`/driver/taskDetails?taskId=${trip.id}`)}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.tripCardHeader}>
+                    <View style={[styles.priorityBadge, {
+                      backgroundColor: trip.priority === 'HIGH' ? COLORS.DANGER
+                        : trip.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS
+                    }]}>
+                      <Text style={styles.priorityText}>{trip.priority}</Text>
+                    </View>
+                    <View style={[styles.statusChip, { backgroundColor: COLORS.PRIMARY_LIGHT + '20' }]}>
+                      <Text style={[styles.statusChipText, { color: COLORS.PRIMARY_LIGHT }]}>📌 Assigned</Text>
+                    </View>
                   </View>
-                  <View style={styles.tripRouteDivider} />
-                  <View style={styles.tripRouteRow}>
-                    <View style={[styles.routeDotSmall, { backgroundColor: COLORS.SUCCESS }]} />
-                    <Text style={styles.tripRouteText} numberOfLines={1}>{trip.deliveryLocation}</Text>
-                  </View>
-                </View>
 
-                <View style={styles.tripCardFooter}>
-                  <Text style={styles.tripCardRecipient}>👤 {trip.recipientName}</Text>
-                  <TouchableOpacity
-                    style={styles.startTripBtn}
-                    onPress={() => router.push(`/driver/taskDetails?taskId=${trip.id}`)}
-                  >
-                    <Text style={styles.startTripBtnText}>Start →</Text>
-                  </TouchableOpacity>
-                </View>
-              </TouchableOpacity>
-            ))}
+                  {/* Deadline Timer */}
+                  {deadlineRemaining !== null && deadlineRemaining > 0 && (
+                    <View style={[
+                      styles.deadlineBanner,
+                      isUrgent && { backgroundColor: COLORS.DANGER + '12', borderColor: COLORS.DANGER + '30' },
+                    ]}>
+                      <Text style={{ fontSize: 12 }}>{isUrgent ? '\ud83d\udd34' : '\u23f1\ufe0f'}</Text>
+                      <Text style={[
+                        styles.deadlineText,
+                        isUrgent && { color: COLORS.DANGER },
+                      ]}>
+                        Accept within {deadlineMin}:{String(deadlineSec).padStart(2, '0')}
+                      </Text>
+                    </View>
+                  )}
+
+                  <View style={styles.tripCardRoute}>
+                    <View style={styles.tripRouteRow}>
+                      <View style={[styles.routeDotSmall, { backgroundColor: COLORS.PRIMARY }]} />
+                      <Text style={styles.tripRouteText} numberOfLines={1}>{trip.pickupLocation}</Text>
+                    </View>
+                    <View style={styles.tripRouteDivider} />
+                    <View style={styles.tripRouteRow}>
+                      <View style={[styles.routeDotSmall, { backgroundColor: COLORS.SUCCESS }]} />
+                      <Text style={styles.tripRouteText} numberOfLines={1}>{trip.deliveryLocation}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.tripCardFooter}>
+                    <Text style={styles.tripCardRecipient}>\ud83d\udc64 {trip.recipientName}</Text>
+                    <TouchableOpacity
+                      style={styles.startTripBtn}
+                      onPress={() => router.push(`/driver/taskDetails?taskId=${trip.id}`)}
+                    >
+                      <Text style={styles.startTripBtnText}>Start \u2192</Text>
+                    </TouchableOpacity>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
 
             {/* Empty block, recent trips moved to its own screen */}
 
@@ -431,4 +457,15 @@ const styles = StyleSheet.create({
     paddingHorizontal: 4, borderWidth: 2, borderColor: COLORS.PRIMARY,
   },
   notifBadgeText: { color: COLORS.PRIMARY_DARK, fontSize: 9, fontWeight: '800' },
+
+  // Deadline timer on assigned cards
+  deadlineBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    backgroundColor: COLORS.INFO + '10', borderRadius: RADIUS.SM,
+    paddingHorizontal: SPACING.SM, paddingVertical: 4,
+    marginBottom: SPACING.SM, borderWidth: 1, borderColor: COLORS.INFO + '25',
+  },
+  deadlineText: {
+    fontSize: FONT_SIZES.XS, fontWeight: '700', color: COLORS.INFO,
+  },
 });

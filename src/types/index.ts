@@ -77,6 +77,8 @@ export interface Task {
   driverAccepted?: boolean;
   acceptedAt?: number;
   rejectedReason?: string;
+  assignedAt?: number;         // When task was assigned to driver
+  approvalDeadline?: number;   // 30-min deadline for driver to accept/reject
   // Timestamps
   arrivedAt?: number;
   createdAt: number;

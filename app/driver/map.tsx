@@ -248,8 +248,14 @@ export default function DriverMapScreen() {
           ))}
         </MapView>
 
-        {/* Info overlay */}
+        {/* Active Trip info overlay */}
         <View style={styles.infoOverlay}>
+          {breadcrumbs.length > 0 && (
+            <View style={styles.infoItem}>
+              <Text style={styles.infoIcon}>🚚</Text>
+              <Text style={[styles.infoText, { color: COLORS.SUCCESS, fontWeight: '700' }]}>Active Trip</Text>
+            </View>
+          )}
           <View style={styles.infoItem}>
             <Text style={styles.infoIcon}>📍</Text>
             <Text style={styles.infoText}>
