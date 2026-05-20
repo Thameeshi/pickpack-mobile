@@ -22,6 +22,7 @@ export async function startTrackingDriverLocation(
     },
     async (loc) => {
       try {
+        // 1. Update driver's live location (for supervisor tracking)
         await setDoc(
           doc(db, 'drivers', driverId),
           {
@@ -37,6 +38,22 @@ export async function startTrackingDriverLocation(
           },
           { merge: true }
         );
+
+        // 2. Record breadcrumb to active trip (for route history)
+        try {
+          const { getActiveTrip, addBreadcrumb } = require('./tripService');
+          const activeTrip = await getActiveTrip(driverId);
+          if (activeTrip?.id) {
+            await addBreadcrumb(activeTrip.id, {
+              lat: loc.coords.latitude,
+              lng: loc.coords.longitude,
+              heading: loc.coords.heading ?? undefined,
+              speed: loc.coords.speed ?? undefined,
+              accuracy: loc.coords.accuracy ?? undefined,
+              timestamp: Date.now(),
+            });
+          }
+        } catch {}
       } catch (e) {
         onError?.(e);
       }

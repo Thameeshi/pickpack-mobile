@@ -38,7 +38,7 @@ export function useDrivers() {
             vehicleModel: data.vehicleModel,
             isOnline: data.isOnline,
           } as Driver;
-        });
+        }).filter(d => d.status === 'approved');
         setDrivers(list);
         setLoading(false);
       },

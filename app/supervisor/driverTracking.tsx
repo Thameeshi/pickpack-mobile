@@ -6,6 +6,7 @@ import {
 import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
 import { useRouter } from 'expo-router';
 import { useDrivers, useDriverLocations } from '../../src/hooks/useDrivers';
+import { getDriversTripStatus } from '../../src/services/tripService';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 const { width, height } = Dimensions.get('window');
@@ -31,7 +32,18 @@ export default function DriverTrackingScreen() {
   const locations = useDriverLocations();
   const [viewMode, setViewMode] = useState<'list' | 'map'>('map');
   const [selectedDriver, setSelectedDriver] = useState<string | null>(null);
+  const [driverTripStatus, setDriverTripStatus] = useState<Record<string, boolean>>({});
   const mapRef = useRef<MapView>(null);
+
+  // Fetch trip status for all drivers
+  useEffect(() => {
+    if (drivers.length > 0) {
+      const ids = drivers.map(d => d.uid);
+      getDriversTripStatus(ids)
+        .then(setDriverTripStatus)
+        .catch(() => {});
+    }
+  }, [drivers]);
 
   if (loading) {
     return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.PRIMARY} /></View>;
@@ -105,6 +117,10 @@ export default function DriverTrackingScreen() {
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: COLORS.SUCCESS }]}>{onlineDrivers.length}</Text>
           <Text style={styles.statLabel}>Online</Text>
+        </View>
+        <View style={styles.statCard}>
+          <Text style={[styles.statNumber, { color: COLORS.WARNING }]}>{Object.values(driverTripStatus).filter(Boolean).length}</Text>
+          <Text style={styles.statLabel}>On Trip</Text>
         </View>
         <View style={styles.statCard}>
           <Text style={[styles.statNumber, { color: COLORS.GRAY_400 }]}>{offlineDrivers.length}</Text>
@@ -195,7 +211,10 @@ export default function DriverTrackingScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.bottomName} numberOfLines={1}>{d.displayName}</Text>
-                    <Text style={styles.bottomSub}>{d.vehiclePlate || 'No plate'}</Text>
+                    <Text style={styles.bottomSub}>
+                      {d.vehiclePlate || 'No plate'}
+                      {driverTripStatus[d.uid] ? ' • 🚚 On Trip' : ''}
+                    </Text>
                   </View>
                 </TouchableOpacity>
               )}
@@ -227,6 +246,11 @@ export default function DriverTrackingScreen() {
                     <View style={[styles.onlineBadge, { backgroundColor: d.hasLocation ? COLORS.SUCCESS : COLORS.GRAY_300 }]}>
                       <Text style={styles.onlineText}>{d.hasLocation ? 'Online' : 'Offline'}</Text>
                     </View>
+                    {driverTripStatus[d.uid] && (
+                      <View style={[styles.onlineBadge, { backgroundColor: COLORS.WARNING }]}>
+                        <Text style={styles.onlineText}>🚚 On Trip</Text>
+                      </View>
+                    )}
                   </View>
                   <Text style={styles.driverDetail}>
                     {d.vehiclePlate || 'No plate'} • {d.phoneNumber || 'No phone'}

@@ -7,7 +7,7 @@ import { getStorage } from 'firebase/storage';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ENV } from '../config/env';
 
-const firebaseConfig = {
+export const firebaseConfig = {
   apiKey: ENV.FIREBASE.API_KEY,
   authDomain: ENV.FIREBASE.AUTH_DOMAIN,
   projectId: ENV.FIREBASE.PROJECT_ID,

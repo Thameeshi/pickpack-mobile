@@ -1,11 +1,12 @@
 import React from 'react';
 import {
-  View, Text, StyleSheet, FlatList, TouchableOpacity,
+  View, Text, StyleSheet, FlatList, TouchableOpacity, Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useNotifications } from '../../src/hooks/useNotifications';
-import { markAsRead, markAllAsRead } from '../../src/services/notificationService';
+import { markAsRead, markAllAsRead, clearAllNotifications, deleteNotification } from '../../src/services/notificationService';
+import { getAllFuelExpenses } from '../../src/services/fuelService';
 import { AppNotification } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
@@ -27,19 +28,66 @@ const TYPE_CONFIG: Record<string, { icon: string; color: string }> = {
 export default function SupervisorNotificationsScreen() {
   const router = useRouter();
   const { user } = useAuth();
-  const { notifications, unreadCount } = useNotifications(user?.uid || '');
+  const { notifications: dbNotifications } = useNotifications(user?.uid || '');
+  const [fuelNotifications, setFuelNotifications] = React.useState<AppNotification[]>([]);
+
+  React.useEffect(() => {
+    if (!user?.uid) return;
+    (async () => {
+      const expenses = await getAllFuelExpenses();
+      const pending = expenses.filter(e => e.status === 'pending');
+      const mapped: AppNotification[] = pending.map(e => ({
+        id: `fuel_${e.id}`,
+        recipientId: user.uid,
+        type: 'fuel_submitted',
+        title: 'Fuel Approval Required',
+        body: `${e.driverName || 'A driver'} requested approval for ${e.litres}L of fuel (LKR ${e.totalCost.toFixed(0)})`,
+        createdAt: e.createdAt || Date.now(),
+        read: false,
+        data: { expenseId: e.id || '' }
+      }));
+      setFuelNotifications(mapped);
+    })();
+  }, [user]);
+
+  const notifications = [...dbNotifications, ...fuelNotifications].sort((a, b) => b.createdAt - a.createdAt);
+  const unreadCount = notifications.filter(n => !n.read).length;
 
   const handlePress = async (notification: AppNotification) => {
-    if (!notification.read && notification.id) {
+    if (!notification.read && notification.id && !notification.id.startsWith('fuel_')) {
       await markAsRead(notification.id);
     }
-    if (notification.data?.taskId) {
+    if (notification.type === 'fuel_submitted') {
+      router.push('/supervisor/fuelApprovals');
+    } else if (notification.data?.taskId) {
       router.push(`/supervisor/assignTask?taskId=${notification.data.taskId}`);
     }
   };
 
   const handleMarkAllRead = async () => {
     if (user?.uid) await markAllAsRead(user.uid);
+  };
+
+  const handleClearAll = () => {
+    Alert.alert('Clear All', 'Are you sure you want to delete all notifications?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Clear', style: 'destructive', onPress: async () => {
+        if (user?.uid) await clearAllNotifications(user.uid);
+      }}
+    ]);
+  };
+
+  const handleDelete = (id: string) => {
+    if (id.startsWith('fuel_')) {
+      Alert.alert('Info', 'Fuel notifications cannot be deleted directly. Please approve or reject them.');
+      return;
+    }
+    Alert.alert('Delete', 'Remove this notification?', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: async () => {
+        await deleteNotification(id);
+      }}
+    ]);
   };
 
   const formatTime = (timestamp: number) => {
@@ -57,13 +105,18 @@ export default function SupervisorNotificationsScreen() {
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>🔔 Notifications</Text>
-        {unreadCount > 0 ? (
-          <TouchableOpacity onPress={handleMarkAllRead}>
-            <Text style={styles.markAllBtn}>Read All</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 60 }} />
-        )}
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          {unreadCount > 0 && (
+            <TouchableOpacity onPress={handleMarkAllRead} style={{ marginRight: SPACING.MD }}>
+              <Text style={styles.markAllBtn}>Read All</Text>
+            </TouchableOpacity>
+          )}
+          {notifications.length > 0 && (
+            <TouchableOpacity onPress={handleClearAll}>
+              <Text style={[styles.markAllBtn, { color: COLORS.WHITE }]}>Clear All</Text>
+            </TouchableOpacity>
+          )}
+        </View>
       </View>
 
       {unreadCount > 0 && (
@@ -91,7 +144,12 @@ export default function SupervisorNotificationsScreen() {
                   <Text style={[styles.cardTitle, !item.read && styles.cardTitleUnread]} numberOfLines={1}>
                     {item.title}
                   </Text>
-                  <Text style={styles.cardTime}>{formatTime(item.createdAt)}</Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <Text style={styles.cardTime}>{formatTime(item.createdAt)}</Text>
+                    <TouchableOpacity onPress={() => handleDelete(item.id!)} style={{ marginLeft: SPACING.SM, padding: 4 }}>
+                      <Text style={{ fontSize: 16 }}>🗑️</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
                 <Text style={styles.cardBody} numberOfLines={2}>{item.body}</Text>
               </View>

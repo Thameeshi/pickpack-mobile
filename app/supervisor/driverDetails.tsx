@@ -8,9 +8,10 @@ import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../src/services/firebase';
 import { getTasksByDriver } from '../../src/services/taskService';
 import { getTripsByDriver } from '../../src/services/tripService';
+import { getRepairsByDriver } from '../../src/services/repairService';
 import { setAccountStatus } from '../../src/services/authService';
 import { useAuth } from '../../src/hooks/useAuth';
-import { Task, TripSession, Driver } from '../../src/types';
+import { Task, TripSession, Driver, RepairRequest, REPAIR_TYPE_LABELS } from '../../src/types';
 import { formatDateTime } from '../../src/utils/helpers';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
@@ -21,6 +22,7 @@ export default function DriverDetailsScreen() {
   const [driver, setDriver] = useState<any>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [trips, setTrips] = useState<TripSession[]>([]);
+  const [repairs, setRepairs] = useState<RepairRequest[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -39,6 +41,11 @@ export default function DriverDetailsScreen() {
         try {
           const driverTrips = await getTripsByDriver(driverId);
           setTrips(driverTrips);
+        } catch {}
+        // Load repairs
+        try {
+          const driverRepairs = await getRepairsByDriver(driverId);
+          setRepairs(driverRepairs);
         } catch {}
       } catch (e) {
         console.log('Error loading driver details:', e);
@@ -69,6 +76,8 @@ export default function DriverDetailsScreen() {
   const weekTrips = trips.filter(t => t.startTime >= weekAgo);
   const weekDistance = weekTrips.reduce((sum, t) => sum + (t.totalDistance || 0), 0);
   const weekFuel = weekTrips.reduce((sum, t) => sum + (t.totalFuelCost || 0), 0);
+  const weekRepairs = repairs.filter(r => r.createdAt >= weekAgo);
+  const pendingRepairs = repairs.filter(r => r.status === 'pending');
 
   const activeTasks = tasks.filter(t => t.status === 'in_progress' || t.status === 'arrived' || t.status === 'assigned');
   const isPending = driver.status === 'pending';
@@ -133,6 +142,8 @@ export default function DriverDetailsScreen() {
           <StatBox icon="📏" label="Distance" value={`${weekDistance.toFixed(0)} km`} color={COLORS.SECONDARY} />
           <StatBox icon="⛽" label="Fuel Cost" value={`LKR ${weekFuel.toFixed(0)}`} color={COLORS.WARNING} />
           <StatBox icon="📋" label="Active" value={String(activeTasks.length)} color={COLORS.INFO} />
+          <StatBox icon="🔧" label="Repairs" value={String(weekRepairs.length)} color={COLORS.DANGER} />
+          <StatBox icon="⏳" label="Pending" value={String(pendingRepairs.length)} color={COLORS.WARNING} />
         </View>
 
         {/* Quick Actions */}
@@ -151,6 +162,29 @@ export default function DriverDetailsScreen() {
             <Text style={styles.actionLabel}>Chat</Text>
           </TouchableOpacity>
         </View>
+
+        {/* Recent Repairs */}
+        <Text style={styles.sectionTitle}>🔧 Recent Repairs</Text>
+        {repairs.length === 0 ? (
+          <View style={styles.emptyBox}><Text style={styles.emptyText}>No repair requests</Text></View>
+        ) : (
+          repairs.slice(0, 5).map(r => (
+            <View key={r.id} style={styles.repairRow}>
+              <Text style={styles.repairIcon}>
+                {r.status === 'approved' ? '✅' : r.status === 'rejected' ? '❌' : '⏳'}
+              </Text>
+              <View style={styles.repairInfo}>
+                <Text style={styles.repairType}>{REPAIR_TYPE_LABELS[r.repairType]}</Text>
+                <Text style={styles.repairMeta}>
+                  {r.description?.substring(0, 40)}{r.description && r.description.length > 40 ? '...' : ''} • {new Date(r.createdAt).toLocaleDateString()}
+                </Text>
+              </View>
+              <Text style={[styles.repairStatus, {
+                color: r.status === 'approved' ? COLORS.SUCCESS : r.status === 'rejected' ? COLORS.DANGER : COLORS.WARNING
+              }]}>{r.status}</Text>
+            </View>
+          ))
+        )}
 
         {/* Recent Tasks */}
         <Text style={styles.sectionTitle}>📋 Recent Deliveries</Text>
@@ -258,4 +292,15 @@ const styles = StyleSheet.create({
   taskDest: { fontSize: FONT_SIZES.MD, fontWeight: '500', color: COLORS.GRAY_800 },
   taskMeta: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 2 },
   taskStatus: { fontSize: FONT_SIZES.XS, fontWeight: '700', textTransform: 'uppercase' },
+
+  // Repairs
+  repairRow: {
+    flexDirection: 'row', alignItems: 'center', backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.LG, padding: SPACING.MD, marginBottom: SPACING.SM, ...SHADOWS.SM,
+  },
+  repairIcon: { fontSize: 20, marginRight: SPACING.MD },
+  repairInfo: { flex: 1 },
+  repairType: { fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_800 },
+  repairMeta: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 2 },
+  repairStatus: { fontSize: FONT_SIZES.XS, fontWeight: '700', textTransform: 'uppercase' },
 });

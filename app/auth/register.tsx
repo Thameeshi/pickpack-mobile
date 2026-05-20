@@ -219,7 +219,7 @@ const styles = StyleSheet.create({
     borderWidth: 2, borderColor: COLORS.GRAY_200, borderRadius: RADIUS.LG,
     marginBottom: SPACING.MD, backgroundColor: COLORS.WHITE,
   },
-  roleCardSelected: { borderColor: COLORS.PRIMARY, backgroundColor: '#EFF6FF' },
+  roleCardSelected: { borderColor: COLORS.PRIMARY, backgroundColor: COLORS.PRIMARY_TINT },
   roleIcon: { fontSize: 32, marginRight: SPACING.LG },
   roleInfo: { flex: 1 },
   roleLabel: { fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_900 },

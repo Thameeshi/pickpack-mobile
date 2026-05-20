@@ -1,5 +1,5 @@
 import {
-  collection, addDoc, getDocs, updateDoc, doc, query, where, onSnapshot,
+  collection, addDoc, getDocs, updateDoc, doc, query, where, onSnapshot, deleteDoc
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { AppNotification, NotificationType } from '../types';
@@ -14,17 +14,18 @@ export async function createNotification(
   senderId?: string,
   senderName?: string,
 ): Promise<string> {
-  const notification: Omit<AppNotification, 'id'> = {
+  const notification: any = {
     recipientId,
-    senderId,
-    senderName,
     title,
     body,
     type,
-    data,
     read: false,
     createdAt: Date.now(),
   };
+
+  if (senderId) notification.senderId = senderId;
+  if (senderName) notification.senderName = senderName;
+  if (data) notification.data = data;
 
   const docRef = await addDoc(collection(db, 'notifications'), notification);
   return docRef.id;
@@ -66,6 +67,19 @@ export async function markAllAsRead(userId: string): Promise<void> {
   );
   const snap = await getDocs(q);
   const promises = snap.docs.map(d => updateDoc(d.ref, { read: true }));
+  await Promise.all(promises);
+}
+
+// ─── Delete notification ──────────────────────────────────────────
+export async function deleteNotification(notificationId: string): Promise<void> {
+  await deleteDoc(doc(db, 'notifications', notificationId));
+}
+
+// ─── Clear all notifications ──────────────────────────────────────
+export async function clearAllNotifications(userId: string): Promise<void> {
+  const q = query(collection(db, 'notifications'), where('recipientId', '==', userId));
+  const snap = await getDocs(q);
+  const promises = snap.docs.map(d => deleteDoc(d.ref));
   await Promise.all(promises);
 }
 

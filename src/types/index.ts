@@ -24,6 +24,7 @@ export interface UserProfile {
   // Supervisor-specific
   department?: string;
   employeeId?: string;
+  supervisorId?: string;
 }
 
 export interface Driver {
@@ -77,6 +78,8 @@ export interface Task {
   driverAccepted?: boolean;
   acceptedAt?: number;
   rejectedReason?: string;
+  assignedAt?: number;         // When task was assigned to driver
+  approvalDeadline?: number;   // 30-min deadline for driver to accept/reject
   // Timestamps
   arrivedAt?: number;
   createdAt: number;
@@ -86,6 +89,8 @@ export interface Task {
   estimatedDeliveryTime?: string;
   // Delivery confirmation
   recipientConfirmedName?: string;
+  // Middle locations
+  middleLocations?: string[];
 }
 
 export interface TaskCreatePayload {
@@ -105,6 +110,7 @@ export interface TaskCreatePayload {
   deliveryLongitude?: number;
   itemCount?: number;
   estimatedDeliveryTime?: string;
+  middleLocations?: string[];
 }
 
 // ===== TRIP SESSION TYPES =====
@@ -132,6 +138,9 @@ export interface TripSession {
   totalFuelLitres?: number;
   deliveriesCompleted?: number;
   deliveriesFailed?: number;
+  startLocation?: string;
+  endLocation?: string;
+  middleLocations?: string[];
 }
 
 // ===== LOCATION TYPES =====
@@ -202,6 +211,51 @@ export interface OdometerReading {
   location?: LocationData;
   timestamp: number;
   verified: boolean;
+}
+
+// ===== REPAIR REQUEST TYPES =====
+export type RepairType =
+  | 'tyre_puncture'
+  | 'engine_issue'
+  | 'brake_failure'
+  | 'battery_dead'
+  | 'oil_leak'
+  | 'radiator_overheat'
+  | 'electrical_fault'
+  | 'body_damage'
+  | 'other';
+
+export const REPAIR_TYPE_LABELS: Record<RepairType, string> = {
+  tyre_puncture: 'Tyre Puncture',
+  engine_issue: 'Engine Issue',
+  brake_failure: 'Brake Failure',
+  battery_dead: 'Battery Dead',
+  oil_leak: 'Oil Leak',
+  radiator_overheat: 'Radiator Overheat',
+  electrical_fault: 'Electrical Fault',
+  body_damage: 'Body Damage',
+  other: 'Other',
+};
+
+export interface RepairRequest {
+  id?: string;
+  driverId: string;
+  driverName: string;
+  tripId?: string;
+  repairType: RepairType;
+  description: string;
+  estimatedCost?: number;
+  actualCost?: number;
+  photoUrls: string[];
+  location?: LocationData;
+  locationAddress?: string;
+  odometerReading?: number;
+  status: ExpenseStatus; // reuse: 'pending' | 'approved' | 'rejected'
+  approvedBy?: string;
+  approvedAt?: number;
+  rejectionReason?: string;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ===== CHAT TYPES =====

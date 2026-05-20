@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Alert, ActivityIndicator, Image,
+  ScrollView, Alert, ActivityIndicator, Image, Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -24,6 +24,7 @@ export default function FuelExpenseScreen() {
   const [receipt, setReceipt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [activeTrip, setActiveTrip] = useState<TripSession | null>(null);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
 
   const totalCost = (Number(litres) || 0) * (Number(costPerLitre) || 0);
 
@@ -32,6 +33,10 @@ export default function FuelExpenseScreen() {
     (async () => {
       const trip = await getActiveTrip(user.uid);
       setActiveTrip(trip);
+      // Pre-fill odometer from active trip's start reading as a helpful baseline
+      if (trip?.startOdometer && !odometerReading) {
+        setOdometerReading(String(trip.startOdometer));
+      }
     })();
   }, [user]);
 
@@ -87,9 +92,7 @@ export default function FuelExpenseScreen() {
         try { await addFuelExpenseToTrip(activeTrip.id, expenseId); } catch {}
       }
 
-      Alert.alert('✅ Submitted', `Fuel expense of LKR ${totalCost.toFixed(2)} submitted for approval.`, [
-        { text: 'OK', onPress: () => router.back() },
-      ]);
+      setShowSuccessModal(true);
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to submit');
     } finally {
@@ -193,6 +196,29 @@ export default function FuelExpenseScreen() {
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Custom Success Modal */}
+      <Modal visible={showSuccessModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>✅ Submitted</Text>
+            </View>
+            <View style={styles.modalBody}>
+               <Text style={styles.modalText}>Fuel expense of <Text style={{fontWeight:'700'}}>LKR {totalCost.toFixed(2)}</Text> submitted for approval.</Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity 
+                style={styles.modalConfirmBtn} 
+                onPress={() => { setShowSuccessModal(false); router.back(); }}
+              >
+                <Text style={styles.modalConfirmText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -257,4 +283,21 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
   },
   submitBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
+    padding: SPACING.XL, width: '85%',
+    borderWidth: 1, borderColor: COLORS.PRIMARY, ...SHADOWS.LG,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM, marginBottom: SPACING.LG },
+  modalTitle: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.GRAY_900 },
+  modalBody: { marginBottom: SPACING.XL },
+  modalText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_700, marginBottom: SPACING.XS },
+  modalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.LG },
+  modalConfirmBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalConfirmText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
 });

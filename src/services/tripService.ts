@@ -2,13 +2,16 @@ import {
   collection, addDoc, getDoc, getDocs, updateDoc, doc, query, where,
 } from 'firebase/firestore';
 import { db } from './firebase';
-import { TripSession, TripStatus, LocationData } from '../types';
+import { TripSession, TripStatus, LocationData, Task } from '../types';
 
 // ─── Start a new trip session ─────────────────────────────────────
 export async function startTrip(
   driverId: string,
   driverName: string,
   startOdometer: number,
+  startLocation?: string,
+  endLocation?: string,
+  middleLocations?: string[],
 ): Promise<string> {
   // Check if there's already an active trip
   const existing = await getActiveTrip(driverId);
@@ -23,6 +26,9 @@ export async function startTrip(
     taskIds: [],
     fuelExpenseIds: [],
     routeBreadcrumbs: [],
+    startLocation: startLocation || '',
+    endLocation: endLocation || '',
+    middleLocations: middleLocations || [],
   };
 
   const docRef = await addDoc(collection(db, 'tripSessions'), tripData);
@@ -43,7 +49,28 @@ export async function getActiveTrip(driverId: string): Promise<TripSession | nul
   return { id: doc.id, ...doc.data() } as TripSession;
 }
 
-// ─── End a trip session ───────────────────────────────────────────
+// ─── Check if a driver is currently on an active trip ─────────────
+export async function isDriverOnTrip(driverId: string): Promise<boolean> {
+  if (!driverId) return false;
+  const trip = await getActiveTrip(driverId);
+  return trip !== null;
+}
+
+// ─── Get active trip status for multiple drivers (batch) ──────────
+export async function getDriversTripStatus(
+  driverIds: string[]
+): Promise<Record<string, boolean>> {
+  if (!driverIds.length) return {};
+  const q = query(
+    collection(db, 'tripSessions'),
+    where('status', '==', 'active'),
+  );
+  const snap = await getDocs(q);
+  const activeDriverIds = new Set(snap.docs.map(d => d.data().driverId));
+  const result: Record<string, boolean> = {};
+  driverIds.forEach(id => { result[id] = activeDriverIds.has(id); });
+  return result;
+}
 export async function endTrip(
   tripId: string,
   endOdometer: number,
@@ -178,6 +205,41 @@ export async function cancelTrip(tripId: string): Promise<void> {
     status: 'cancelled' as TripStatus,
     endTime: Date.now(),
   });
+}
+
+// ─── Link all accepted/assigned tasks to a trip ──────────────────
+export async function linkAcceptedTasksToTrip(
+  driverId: string,
+  tripId: string,
+): Promise<string[]> {
+  const q = query(
+    collection(db, 'tasks'),
+    where('assignedDriverId', '==', driverId),
+  );
+  const snap = await getDocs(q);
+  const linkedTaskIds: string[] = [];
+
+  for (const taskDoc of snap.docs) {
+    const task = taskDoc.data() as Task;
+    // Link accepted or assigned+accepted tasks
+    if (['accepted', 'assigned'].includes(task.status) && task.status !== 'delivered' && task.status !== 'failed') {
+      await updateDoc(doc(db, 'tasks', taskDoc.id), { tripId });
+      linkedTaskIds.push(taskDoc.id);
+    }
+  }
+
+  // Update the trip's taskIds array
+  if (linkedTaskIds.length > 0) {
+    const tripRef = doc(db, 'tripSessions', tripId);
+    const tripSnap = await getDoc(tripRef);
+    if (tripSnap.exists()) {
+      const existingIds = (tripSnap.data() as TripSession).taskIds || [];
+      const merged = [...new Set([...existingIds, ...linkedTaskIds])];
+      await updateDoc(tripRef, { taskIds: merged });
+    }
+  }
+
+  return linkedTaskIds;
 }
 
 // ─── Haversine distance helper (km) ──────────────────────────────

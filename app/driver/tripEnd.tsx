@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  Alert, ActivityIndicator, Image, ScrollView,
+  Alert, ActivityIndicator, Image, ScrollView, Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { doc, setDoc } from 'firebase/firestore';
+import { db } from '../../src/services/firebase';
 import { useAuth } from '../../src/hooks/useAuth';
 import { endTrip, getActiveTrip } from '../../src/services/tripService';
+import { getTaskById } from '../../src/services/taskService';
 import { addOdometerReading, uploadOdometerPhoto } from '../../src/services/fuelService';
 import { stopTrackingDriverLocation, getCurrentLocation } from '../../src/services/locationService';
-import { TripSession } from '../../src/types';
+import { TripSession, Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function TripEndScreen() {
@@ -21,6 +24,8 @@ export default function TripEndScreen() {
   const [loading, setLoading] = useState(false);
   const [loadingTrip, setLoadingTrip] = useState(true);
   const [tripSummary, setTripSummary] = useState<TripSession | null>(null);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingTasks, setPendingTasks] = useState<Task[]>([]);
 
   useEffect(() => {
     (async () => {
@@ -56,52 +61,79 @@ export default function TripEndScreen() {
       return;
     }
 
-    Alert.alert(
-      '🏁 End Trip?',
-      `Start: ${activeTrip?.startOdometer?.toLocaleString()} km\nEnd: ${Number(odometer).toLocaleString()} km\nDistance: ${(Number(odometer) - (activeTrip?.startOdometer || 0)).toLocaleString()} km`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'End Trip', style: 'destructive', onPress: async () => {
-            setLoading(true);
-            try {
-              let loc = undefined;
-              try {
-                const position = await getCurrentLocation();
-                loc = { lat: position.coords.latitude, lng: position.coords.longitude };
-              } catch {}
+    setShowConfirmModal(true);
+  };
 
-              // 1. Save odometer reading
-              const readingId = await addOdometerReading({
-                driverId: user!.uid,
-                driverName: profile?.name || '',
-                reading: Number(odometer),
-                type: 'trip_end',
-                location: loc,
-                tripId: activeTrip?.id,
-                timestamp: Date.now(),
-                verified: false,
-              });
+  const onConfirmEndTrip = async () => {
+    setLoading(true);
+    try {
+      let loc = undefined;
+      try {
+        const position = await getCurrentLocation();
+        loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+      } catch {}
 
-              if (photo) {
-                try { await uploadOdometerPhoto(readingId, photo); } catch {}
-              }
+      // 1. Save odometer reading
+      const readingId = await addOdometerReading({
+        driverId: user!.uid,
+        driverName: profile?.name || '',
+        reading: Number(odometer),
+        type: 'trip_end',
+        location: loc,
+        tripId: activeTrip?.id,
+        timestamp: Date.now(),
+        verified: false,
+      });
 
-              // 2. End the trip
-              const summary = await endTrip(activeTrip!.id!, Number(odometer));
-              setTripSummary(summary);
+      if (photo) {
+        try { await uploadOdometerPhoto(readingId, photo); } catch {}
+      }
 
-              // 3. Stop GPS tracking
-              stopTrackingDriverLocation();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed to end trip');
-            } finally {
-              setLoading(false);
-            }
-          },
-        },
-      ],
-    );
+      // 2. End the trip
+      const summary = await endTrip(activeTrip!.id!, Number(odometer));
+      setTripSummary(summary);
+
+      // 3. Stop GPS tracking
+      stopTrackingDriverLocation();
+
+      // 4. Mark driver as offline
+      try {
+        await setDoc(
+          doc(db, 'drivers', user!.uid),
+          { isOnline: false },
+          { merge: true }
+        );
+      } catch {}
+
+      // 5. Check for pending deliveries that need proof of delivery
+      if (summary?.taskIds && summary.taskIds.length > 0) {
+        const taskPromises = summary.taskIds.map((id: string) => getTaskById(id));
+        const tasks = await Promise.all(taskPromises);
+        const pending = tasks.filter(
+          (t): t is Task => t !== null && t.status !== 'delivered' && t.status !== 'failed'
+        );
+        setPendingTasks(pending);
+
+        if (pending.length > 0) {
+          // Auto-redirect to first pending task for proof of delivery
+          Alert.alert(
+            '📦 Pending Deliveries',
+            `You have ${pending.length} delivery${pending.length > 1 ? 'ies' : ''} that need proof of delivery. Let\'s complete them now.`,
+            [
+              {
+                text: 'Complete Now',
+                onPress: () => router.push(`/driver/proofOfDelivery?taskId=${pending[0].id}&supervisorId=${pending[0].supervisorId || ''}`),
+              },
+            ]
+          );
+          return;
+        }
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to end trip');
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (loadingTrip) {
@@ -166,6 +198,32 @@ export default function TripEndScreen() {
             </View>
           </View>
 
+          {/* Pending deliveries needing proof */}
+          {pendingTasks.length > 0 && (
+            <View style={styles.pendingSection}>
+              <Text style={styles.pendingSectionTitle}>📦 Pending Proof of Delivery</Text>
+              <Text style={styles.pendingSectionDesc}>
+                {pendingTasks.length} delivery{pendingTasks.length > 1 ? 'ies' : ''} still need proof of delivery
+              </Text>
+              {pendingTasks.map((t, index) => (
+                <TouchableOpacity
+                  key={t.id}
+                  style={styles.pendingTaskCard}
+                  onPress={() => router.push(`/driver/proofOfDelivery?taskId=${t.id}&supervisorId=${t.supervisorId || ''}`)}
+                >
+                  <View style={styles.pendingTaskInfo}>
+                    <Text style={styles.pendingTaskNumber}>#{index + 1}</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pendingTaskRoute}>{t.pickupLocation} → {t.deliveryLocation}</Text>
+                      <Text style={styles.pendingTaskRecipient}>👤 {t.recipientName}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.pendingTaskArrow}>Complete →</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+
           <TouchableOpacity
             style={styles.doneBtn}
             onPress={() => router.replace('/driver/dashboard')}
@@ -184,11 +242,14 @@ export default function TripEndScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={[styles.header, { backgroundColor: COLORS.DANGER }]}>
+      <View style={[styles.header, { backgroundColor: COLORS.PRIMARY }]}>
         <TouchableOpacity onPress={() => router.back()}>
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>🏁 End Trip</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 24, height: 24, tintColor: COLORS.WHITE }} />
+          <Text style={styles.title}>End Trip</Text>
+        </View>
         <View style={{ width: 50 }} />
       </View>
 
@@ -261,12 +322,39 @@ export default function TripEndScreen() {
             <ActivityIndicator color={COLORS.WHITE} />
           ) : (
             <>
-              <Text style={styles.endBtnIcon}>🏁</Text>
+              <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 28, height: 28, tintColor: COLORS.WHITE }} />
               <Text style={styles.endBtnText}>End Trip</Text>
             </>
           )}
         </TouchableOpacity>
       </ScrollView>
+
+      {/* Custom Confirmation Modal */}
+      <Modal visible={showConfirmModal} transparent animationType="fade">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 24, height: 24, tintColor: COLORS.PRIMARY }} />
+              <Text style={styles.modalTitle}>End Trip?</Text>
+            </View>
+            <View style={styles.modalBody}>
+               <Text style={styles.modalText}>Start: <Text style={{fontWeight:'700'}}>{activeTrip.startOdometer?.toLocaleString()} km</Text></Text>
+               <Text style={styles.modalText}>End: <Text style={{fontWeight:'700'}}>{Number(odometer).toLocaleString()} km</Text></Text>
+               <Text style={styles.modalText}>Distance: <Text style={{fontWeight:'700'}}>{(Number(odometer) - (activeTrip.startOdometer || 0)).toLocaleString()} km</Text></Text>
+               <Text style={[styles.modalText, { marginTop: SPACING.SM }]}>📦 {activeTrip.taskIds?.length || 0} deliveries • ⛽ {activeTrip.fuelExpenseIds?.length || 0} fuel stops</Text>
+            </View>
+            <View style={styles.modalFooter}>
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowConfirmModal(false)}>
+                <Text style={styles.modalCancelText}>CANCEL</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalConfirmBtn} onPress={() => { setShowConfirmModal(false); onConfirmEndTrip(); }}>
+                <Text style={styles.modalConfirmText}>END TRIP</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 }
@@ -334,11 +422,10 @@ const styles = StyleSheet.create({
   photoPlaceholderIcon: { fontSize: 48, marginBottom: SPACING.SM },
   photoPlaceholderText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_500 },
   endBtn: {
-    backgroundColor: COLORS.DANGER, paddingVertical: SPACING.LG,
+    backgroundColor: COLORS.PRIMARY, paddingVertical: SPACING.LG,
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
     flexDirection: 'row', justifyContent: 'center', gap: SPACING.SM, ...SHADOWS.MD,
   },
-  endBtnIcon: { fontSize: 24 },
   endBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.XL, fontWeight: '700' },
   // Summary styles
   summaryCard: {
@@ -368,4 +455,56 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
   },
   doneBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+  // Pending deliveries section
+  pendingSection: {
+    backgroundColor: COLORS.WARNING + '10', borderRadius: RADIUS.LG,
+    padding: SPACING.LG, marginBottom: SPACING.XL,
+    borderWidth: 1.5, borderColor: COLORS.WARNING + '30',
+  },
+  pendingSectionTitle: {
+    fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_900, marginBottom: SPACING.XS,
+  },
+  pendingSectionDesc: {
+    fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, marginBottom: SPACING.MD,
+  },
+  pendingTaskCard: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.MD,
+    padding: SPACING.MD, marginBottom: SPACING.SM, ...SHADOWS.SM,
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+  },
+  pendingTaskInfo: {
+    flexDirection: 'row', alignItems: 'center', flex: 1,
+  },
+  pendingTaskNumber: {
+    fontSize: FONT_SIZES.LG, fontWeight: '800', color: COLORS.PRIMARY,
+    marginRight: SPACING.MD, width: 30,
+  },
+  pendingTaskRoute: {
+    fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.GRAY_800,
+  },
+  pendingTaskRecipient: {
+    fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500, marginTop: 2,
+  },
+  pendingTaskArrow: {
+    fontSize: FONT_SIZES.SM, fontWeight: '700', color: COLORS.PRIMARY,
+  },
+  // Modal Styles
+  modalOverlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center', alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
+    padding: SPACING.XL, width: '85%',
+    borderWidth: 1, borderColor: COLORS.PRIMARY, ...SHADOWS.LG,
+  },
+  modalHeader: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM, marginBottom: SPACING.LG },
+  modalTitle: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.GRAY_900 },
+  modalBody: { marginBottom: SPACING.XL },
+  modalText: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_700, marginBottom: SPACING.XS },
+  modalFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: SPACING.LG },
+  modalCancelBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalCancelText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
+  modalConfirmBtn: { paddingVertical: SPACING.SM, paddingHorizontal: SPACING.MD },
+  modalConfirmText: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
 });

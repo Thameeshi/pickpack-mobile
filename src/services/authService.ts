@@ -5,9 +5,12 @@ import {
   signOut,
   onAuthStateChanged,
   User,
+  getAuth,
 } from 'firebase/auth';
-import { setDoc, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { setDoc, doc, getDoc, updateDoc, getFirestore } from 'firebase/firestore';
+import { initializeApp, deleteApp } from 'firebase/app';
 import { UserProfile, UserRole, AccountStatus } from '../types';
+import { firebaseConfig } from './firebase';
 
 // ─── Register a new user ───────────────────────────────────────────
 export async function registerUser(
@@ -35,6 +38,47 @@ export async function registerUser(
   };
 
   await setDoc(doc(db, 'users', user.uid), profile);
+  return profile;
+}
+
+// ─── Register a new driver (Supervisor action) ─────────────────────
+// Uses secondary app to avoid signing out the current supervisor
+export async function createPendingDriver(
+  email: string,
+  password: string,
+  name: string,
+  phone: string,
+  vehiclePlate: string,
+  supervisorId: string
+): Promise<UserProfile> {
+  const secondaryApp = initializeApp(firebaseConfig, "SecondaryApp_" + Date.now());
+  const secondaryAuth = getAuth(secondaryApp);
+  const secondaryDb = getFirestore(secondaryApp);
+  
+  const cred = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+  const user = cred.user;
+
+  const profile: UserProfile = {
+    uid: user.uid,
+    email,
+    name,
+    displayName: name,
+    phone,
+    role: 'driver',
+    status: 'pending', // Requires superadmin approval
+    language: 'en',
+    createdAt: new Date().toISOString(),
+    vehiclePlate,
+    supervisorId, // Link driver to this supervisor
+  };
+
+  // Use secondaryDb so the write is authenticated as the new driver (satisfies isOwner rule)
+  await setDoc(doc(secondaryDb, 'users', user.uid), profile);
+  
+  // Clean up secondary auth and app
+  await signOut(secondaryAuth);
+  await deleteApp(secondaryApp);
+  
   return profile;
 }
 

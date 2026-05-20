@@ -29,10 +29,6 @@ export default function LoginScreen() {
     setLoading(true);
     try {
       await login(email, password);
-      // After login succeeds, check the profile status
-      // The useAuth hook will update `profile` via onAuthStateChanged
-      // and the index.tsx screen will route based on status.
-      // But we also want to show immediate feedback:
       const { getCurrentUser } = require('../../src/services/authService');
       const userProfile = await getCurrentUser();
       if (userProfile?.status === 'pending') {
@@ -94,6 +90,7 @@ export default function LoginScreen() {
             <Text style={styles.logoIcon}>📦</Text>
           </View>
           <Text style={styles.title}>PickPack</Text>
+          <View style={styles.goldLine} />
           <Text style={styles.subtitle}>Sign in to your account</Text>
         </View>
 
@@ -142,7 +139,7 @@ export default function LoginScreen() {
             activeOpacity={0.8}
           >
             {loading ? (
-              <ActivityIndicator color={COLORS.WHITE} />
+              <ActivityIndicator color={COLORS.PRIMARY_DARK} />
             ) : (
               <Text style={styles.loginButtonText}>Sign In</Text>
             )}
@@ -166,13 +163,18 @@ const styles = StyleSheet.create({
   content: { flexGrow: 1, justifyContent: 'center', padding: SPACING.XL },
   header: { alignItems: 'center', marginBottom: SPACING.XXL },
   logoContainer: {
-    width: 80, height: 80, borderRadius: 40,
-    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 88, height: 88, borderRadius: 44,
+    backgroundColor: COLORS.ACCENT, 
     justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.LG,
+    ...SHADOWS.LG,
   },
-  logoIcon: { fontSize: 40 },
+  logoIcon: { fontSize: 42 },
   title: { fontSize: FONT_SIZES.DISPLAY, fontWeight: '800', color: COLORS.WHITE, letterSpacing: 2 },
-  subtitle: { fontSize: FONT_SIZES.MD, color: COLORS.WHITE, opacity: 0.8, marginTop: SPACING.SM },
+  goldLine: {
+    width: 48, height: 3, backgroundColor: COLORS.ACCENT,
+    borderRadius: 2, marginTop: SPACING.SM, marginBottom: SPACING.SM,
+  },
+  subtitle: { fontSize: FONT_SIZES.MD, color: COLORS.ACCENT, opacity: 0.9, marginTop: SPACING.XS },
   formCard: {
     backgroundColor: COLORS.WHITE, borderRadius: RADIUS.XL, padding: SPACING.XL,
     ...SHADOWS.LG,
@@ -189,11 +191,11 @@ const styles = StyleSheet.create({
   showBtn: { paddingHorizontal: SPACING.SM },
   showBtnText: { color: COLORS.PRIMARY, fontSize: FONT_SIZES.SM, fontWeight: '600' },
   loginButton: {
-    backgroundColor: COLORS.PRIMARY, paddingVertical: SPACING.LG,
+    backgroundColor: COLORS.ACCENT, paddingVertical: SPACING.LG,
     borderRadius: RADIUS.LG, alignItems: 'center', marginTop: SPACING.SM,
   },
   buttonDisabled: { opacity: 0.6 },
-  loginButtonText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+  loginButtonText: { color: COLORS.PRIMARY_DARK, fontSize: FONT_SIZES.LG, fontWeight: '800' },
   footer: { flexDirection: 'row', justifyContent: 'center', marginTop: SPACING.XL },
   footerText: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, opacity: 0.8 },
   linkText: { color: COLORS.ACCENT, fontSize: FONT_SIZES.MD, fontWeight: '700' },
