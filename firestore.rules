@@ -30,9 +30,8 @@ service cloud.firestore {
 
     // ─── Users collection ─────────────────────────────────────────
     match /users/{userId} {
-      // Anyone signed in can read their own profile
-      // Supervisors and superadmins can read all profiles
-      allow read: if isOwner(userId) || isSupervisor();
+      // Any signed-in user can read profiles (needed for messaging, driver lists, etc.)
+      allow read: if isSignedIn();
 
       // Users can create their own profile during registration
       allow create: if isOwner(userId);
@@ -90,10 +89,20 @@ service cloud.firestore {
       allow write: if isOwner(driverId);
     }
 
-    // ─── Chats ────────────────────────────────────────────────────
+    // ─── Chats (task-based, legacy) ─────────────────────────────────
     match /chats/{taskId}/messages/{messageId} {
       // Both supervisor and assigned driver can read/write messages
       allow read, write: if isSignedIn();
+    }
+
+    // ─── Conversations (direct messaging) ─────────────────────────
+    match /conversations/{conversationId} {
+      // Participants can read/write conversation metadata
+      allow read, write: if isSignedIn();
+
+      match /messages/{messageId} {
+        allow read, write: if isSignedIn();
+      }
     }
 
     // ─── Routes ───────────────────────────────────────────────────
@@ -121,6 +130,26 @@ service cloud.firestore {
 
       // Supervisors can update status (approve/reject)
       // Drivers can update their own pending expenses
+      allow update: if isSupervisor()
+                    || (isOwner(resource.data.driverId) && resource.data.status == 'pending');
+
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Repair Requests ──────────────────────────────────────────
+    match /repairRequests/{requestId} {
+      // Drivers can read their own requests
+      // Supervisors and superadmins can read all
+      allow read: if isSignedIn() && (
+        resource.data.driverId == request.auth.uid
+        || isSupervisor()
+      );
+
+      // Drivers can create their own requests
+      allow create: if isDriver() && request.resource.data.driverId == request.auth.uid;
+
+      // Supervisors can update status
+      // Drivers can update their own pending requests (e.g., add photos)
       allow update: if isSupervisor()
                     || (isOwner(resource.data.driverId) && resource.data.status == 'pending');
 

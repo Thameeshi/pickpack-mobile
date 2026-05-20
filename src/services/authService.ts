@@ -8,7 +8,7 @@ import {
   getAuth,
 } from 'firebase/auth';
 import { setDoc, doc, getDoc, updateDoc, getFirestore } from 'firebase/firestore';
-import { initializeApp } from 'firebase/app';
+import { initializeApp, deleteApp } from 'firebase/app';
 import { UserProfile, UserRole, AccountStatus } from '../types';
 import { firebaseConfig } from './firebase';
 
@@ -77,7 +77,7 @@ export async function createPendingDriver(
   
   // Clean up secondary auth and app
   await signOut(secondaryAuth);
-  await secondaryApp.delete?.();
+  await deleteApp(secondaryApp);
   
   return profile;
 }

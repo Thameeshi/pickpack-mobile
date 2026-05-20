@@ -38,7 +38,10 @@ export default function TaskHistoryScreen() {
             <TouchableOpacity onPress={() => router.back()} style={{ marginRight: SPACING.MD }}>
               <Text style={styles.backBtn}>←</Text>
             </TouchableOpacity>
-            <Text style={styles.title}>📜 Recent Trips</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Image source={require('../../assets/icons/recent-trip.png')} style={{ width: 28, height: 28, marginRight: SPACING.SM }} />
+              <Text style={styles.title}>Recent Trips</Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => (

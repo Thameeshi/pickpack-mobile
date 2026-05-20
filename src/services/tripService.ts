@@ -9,6 +9,9 @@ export async function startTrip(
   driverId: string,
   driverName: string,
   startOdometer: number,
+  startLocation?: string,
+  endLocation?: string,
+  middleLocations?: string[],
 ): Promise<string> {
   // Check if there's already an active trip
   const existing = await getActiveTrip(driverId);
@@ -23,6 +26,9 @@ export async function startTrip(
     taskIds: [],
     fuelExpenseIds: [],
     routeBreadcrumbs: [],
+    startLocation: startLocation || '',
+    endLocation: endLocation || '',
+    middleLocations: middleLocations || [],
   };
 
   const docRef = await addDoc(collection(db, 'tripSessions'), tripData);

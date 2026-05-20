@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
   Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, ScrollView, Modal
@@ -7,19 +7,45 @@ import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
 import { startTrip, linkAcceptedTasksToTrip } from '../../src/services/tripService';
+import { getTasksByDriver } from '../../src/services/taskService';
 import { addOdometerReading, uploadOdometerPhoto } from '../../src/services/fuelService';
 import { getCurrentLocation } from '../../src/services/locationService';
 import { startTrackingDriverLocation } from '../../src/services/locationService';
+import { Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function TripStartScreen() {
   const router = useRouter();
   const { user, profile } = useAuth();
   const [odometer, setOdometer] = useState('');
-  const [photo, setPhoto] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [loadingTasks, setLoadingTasks] = useState(true);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [linkedTaskCount, setLinkedTaskCount] = useState(0);
+  const [photo, setPhoto] = useState<string | null>(null);
+
+  // Auto-fetched from accepted tasks
+  const [acceptedTasks, setAcceptedTasks] = useState<Task[]>([]);
+
+  // Fetch accepted/assigned tasks
+  useEffect(() => {
+    if (!user?.uid) return;
+    (async () => {
+      try {
+        const allTasks = await getTasksByDriver(user.uid);
+        const active = allTasks.filter(
+          t => t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_progress'
+        );
+        // Sort by most recently accepted/updated and take only the latest one
+        active.sort((a, b) => (b.acceptedAt || b.updatedAt || 0) - (a.acceptedAt || a.updatedAt || 0));
+        setAcceptedTasks(active.length > 0 ? [active[0]] : []);
+      } catch (e) {
+        console.error('Failed to fetch tasks:', e);
+      } finally {
+        setLoadingTasks(false);
+      }
+    })();
+  }, [user?.uid]);
 
   const handleTakePhoto = async () => {
     try {
@@ -38,27 +64,31 @@ export default function TripStartScreen() {
       return;
     }
     if (!photo) {
-      Alert.alert('📷 Required', 'Please take a photo of your odometer dashboard');
+      Alert.alert('📷 Required', 'Please take a photo of your odometer');
       return;
     }
 
     setLoading(true);
     try {
-      // 1. Get current GPS location
       let loc = undefined;
       try {
         const position = await getCurrentLocation();
         loc = { lat: position.coords.latitude, lng: position.coords.longitude };
       } catch {}
 
-      // 2. Create trip session
+      // Use first task's pickup/delivery as start/end
+      const firstTask = acceptedTasks[0];
+      const startLocation = firstTask?.pickupLocation || '';
+      const endLocation = firstTask?.deliveryLocation || '';
+
       const tripId = await startTrip(
         user!.uid,
         profile?.name || '',
         Number(odometer),
+        startLocation,
+        endLocation,
       );
 
-      // 3. Save odometer reading
       const readingId = await addOdometerReading({
         driverId: user!.uid,
         driverName: profile?.name || '',
@@ -70,18 +100,15 @@ export default function TripStartScreen() {
         verified: false,
       });
 
-      // 4. Upload odometer photo
       if (photo) {
         try { await uploadOdometerPhoto(readingId, photo); } catch {}
       }
 
-      // 5. Auto-link all accepted/assigned tasks to this trip
       try {
         const linkedIds = await linkAcceptedTasksToTrip(user!.uid, tripId);
         setLinkedTaskCount(linkedIds.length);
       } catch {}
 
-      // 6. Start GPS tracking
       try { await startTrackingDriverLocation(user!.uid); } catch {}
 
       setShowSuccessModal(true);
@@ -94,12 +121,16 @@ export default function TripStartScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={styles.backBtn}>← Back</Text>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backBtnWrapper}>
+          <Text style={styles.backBtn}>←</Text>
         </TouchableOpacity>
-        <Text style={styles.title}>🚚 Start Trip</Text>
-        <View style={{ width: 50 }} />
+        <View style={styles.headerTitleContainer}>
+          <Image source={require('../../assets/icons/new-trip.png')} style={styles.headerIcon} />
+          <Text style={styles.title}>New Trip Request</Text>
+        </View>
+        <View style={{ width: 40 }} />
       </View>
 
       <KeyboardAvoidingView
@@ -107,82 +138,170 @@ export default function TripStartScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          {/* Info Banner */}
-          <View style={styles.infoBanner}>
-            <Text style={styles.infoIcon}>📋</Text>
-            <View style={styles.infoContent}>
-              <Text style={styles.infoTitle}>Before You Drive</Text>
-              <Text style={styles.infoText}>
-                Record your starting odometer reading and take a photo of the dashboard.
-                This activates GPS tracking for your trip.
-              </Text>
+          
+          {/* Top Info Card */}
+          <View style={styles.topInfoCard}>
+            <View style={styles.locationPinIcon}>
+              <Image source={require('../../assets/icons/truck.png')} style={{ width: 24, height: 24, resizeMode: 'contain' }} />
+            </View>
+            <View>
+              <Text style={styles.topInfoValue}>{profile?.vehiclePlate || '42 2732'}</Text>
+              <Text style={styles.topInfoSub}>{profile?.name || 'Driver'}</Text>
             </View>
           </View>
 
-          {/* Odometer Input */}
-          <Text style={styles.label}>Starting Odometer Reading (km)</Text>
-          <TextInput
-            style={styles.odometerInput}
-            placeholder="e.g. 45230"
-            placeholderTextColor={COLORS.GRAY_400}
-            keyboardType="numeric"
-            value={odometer}
-            onChangeText={setOdometer}
-          />
-
-          {odometer ? (
-            <View style={styles.readingPreview}>
-              <Text style={styles.readingPreviewLabel}>Starting at</Text>
-              <Text style={styles.readingPreviewValue}>{Number(odometer).toLocaleString()} km</Text>
+          {/* Odometer Input Card */}
+          <View style={styles.odometerCard}>
+            <View style={styles.odometerIconWrapper}>
+              <Image source={require('../../assets/icons/odometer.png')} style={styles.odometerIconImage} />
             </View>
-          ) : null}
+            <View style={styles.odometerInputWrapper}>
+              <Text style={styles.odometerTitle}>Start Odometer Reading</Text>
+              <View style={styles.odometerInputContainer}>
+                <TextInput
+                  style={styles.odometerInput}
+                  placeholder="Tap to enter"
+                  placeholderTextColor={COLORS.GRAY_400}
+                  keyboardType="numeric"
+                  value={odometer}
+                  onChangeText={setOdometer}
+                />
+                <Text style={styles.editIcon}>✏️</Text>
+              </View>
+            </View>
+          </View>
 
-          {/* Photo */}
-          <Text style={styles.label}>Odometer Photo</Text>
+          {/* Odometer Photo */}
+          <Text style={styles.sectionLabel}>📷 Odometer Photo</Text>
           {photo ? (
             <View style={styles.photoContainer}>
               <Image source={{ uri: photo }} style={styles.photo} />
               <TouchableOpacity style={styles.retakeBtn} onPress={handleTakePhoto}>
-                <Text style={styles.retakeBtnText}>📷 Retake</Text>
+                <Text style={styles.retakeBtnText}>📷 Retake Photo</Text>
               </TouchableOpacity>
             </View>
           ) : (
             <TouchableOpacity style={styles.photoPlaceholder} onPress={handleTakePhoto}>
               <Text style={styles.photoPlaceholderIcon}>📷</Text>
-              <Text style={styles.photoPlaceholderTitle}>Take Odometer Photo</Text>
-              <Text style={styles.photoPlaceholderText}>
-                Photo of your dashboard showing the odometer reading
-              </Text>
+              <Text style={styles.photoPlaceholderText}>Take odometer photo</Text>
+              <Text style={styles.photoPlaceholderHint}>Capture your starting odometer reading</Text>
             </TouchableOpacity>
           )}
 
-          {/* Checklist */}
-          <View style={styles.checklist}>
-            <Text style={styles.checklistTitle}>Pre-Trip Checklist</Text>
-            <CheckItem label="Odometer reading entered" done={!!odometer && !isNaN(Number(odometer))} />
-            <CheckItem label="Dashboard photo taken" done={!!photo} />
-            <CheckItem label="GPS tracking will activate" done={true} />
-          </View>
+          {/* ═══ DELIVERY DETAILS ═══ */}
+          <Text style={styles.sectionLabel}>📦 Delivery Details</Text>
+          {loadingTasks ? (
+            <ActivityIndicator size="small" color={COLORS.PRIMARY} style={{ marginVertical: SPACING.XL }} />
+          ) : acceptedTasks.length === 0 ? (
+            <View style={styles.noTaskCard}>
+              <Text style={styles.noTaskIcon}>📦</Text>
+              <Text style={styles.noTaskTitle}>No accepted tasks</Text>
+              <Text style={styles.noTaskSub}>
+                Accept a delivery assignment first, then come back to start your trip.
+              </Text>
+            </View>
+          ) : (
+            acceptedTasks.map((task, idx) => (
+              <View key={task.id || idx} style={styles.taskCard}>
+                {/* Header row */}
+                <View style={styles.taskCardHeader}>
+                  <View style={[styles.taskStatusBadge, {
+                    backgroundColor: task.status === 'in_progress' ? COLORS.SECONDARY + '15'
+                      : task.status === 'accepted' ? COLORS.INFO + '15' : COLORS.PRIMARY_LIGHT + '15',
+                  }]}>
+                    <Text style={[styles.taskStatusText, {
+                      color: task.status === 'in_progress' ? COLORS.SECONDARY
+                        : task.status === 'accepted' ? COLORS.INFO : COLORS.PRIMARY_LIGHT,
+                    }]}>
+                      {task.status === 'in_progress' ? '🚚 In Progress'
+                        : task.status === 'accepted' ? '✅ Accepted' : '📌 Assigned'}
+                    </Text>
+                  </View>
+                  <View style={[styles.taskPriorityChip, {
+                    backgroundColor: task.priority === 'HIGH' ? COLORS.DANGER
+                      : task.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS,
+                  }]}>
+                    <Text style={styles.taskPriorityText}>{task.priority}</Text>
+                  </View>
+                </View>
 
-          {/* Start Button */}
+                {/* Route */}
+                <View style={styles.taskRoute}>
+                  <View style={styles.taskRouteRow}>
+                    <View style={[styles.taskRouteDot, { backgroundColor: '#72252A' }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.taskRouteLabel}>PICKUP</Text>
+                      <Text style={styles.taskRouteValue}>{task.pickupLocation}</Text>
+                    </View>
+                  </View>
+                  <View style={styles.taskRouteLine} />
+                  <View style={styles.taskRouteRow}>
+                    <View style={[styles.taskRouteDot, { backgroundColor: COLORS.SUCCESS }]} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.taskRouteLabel}>DELIVERY</Text>
+                      <Text style={styles.taskRouteValue}>{task.deliveryLocation}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Recipient + Details */}
+                <View style={styles.taskDetails}>
+                  {task.recipientName && (
+                    <View style={styles.taskDetailRow}>
+                      <Text style={styles.taskDetailLabel}>Recipient</Text>
+                      <Text style={styles.taskDetailValue}>{task.recipientName}</Text>
+                    </View>
+                  )}
+                  {task.description && (
+                    <View style={styles.taskDetailRow}>
+                      <Text style={styles.taskDetailLabel}>Description</Text>
+                      <Text style={styles.taskDetailValue}>{task.description}</Text>
+                    </View>
+                  )}
+                  {task.itemCount && (
+                    <View style={styles.taskDetailRow}>
+                      <Text style={styles.taskDetailLabel}>Items</Text>
+                      <Text style={styles.taskDetailValue}>{task.itemCount} packages</Text>
+                    </View>
+                  )}
+                  {task.qrCode && (
+                    <View style={styles.taskDetailRow}>
+                      <Text style={styles.taskDetailLabel}>QR Code</Text>
+                      <Text style={[styles.taskDetailValue, { fontSize: 11 }]}>{task.qrCode}</Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            ))
+          )}
+
+          <View style={{ height: 24 }} />
+          
+          {/* Start Trip Button */}
           <TouchableOpacity
-            style={[styles.startBtn, loading && { opacity: 0.6 }]}
+            style={[
+              styles.requestBtn,
+              (loading || acceptedTasks.length === 0) && { opacity: 0.5 },
+            ]}
             onPress={handleStartTrip}
-            disabled={loading}
+            disabled={loading || acceptedTasks.length === 0}
+            activeOpacity={0.8}
           >
             {loading ? (
               <ActivityIndicator color={COLORS.WHITE} />
             ) : (
-              <>
-                <Text style={styles.startBtnIcon}>🚀</Text>
-                <Text style={styles.startBtnText}>Start Trip</Text>
-              </>
+              <View style={styles.requestBtnContent}>
+                <Text style={styles.requestBtnText}>Start Trip</Text>
+              </View>
             )}
           </TouchableOpacity>
+          
+          <View style={{ height: 40 }} />
+
         </ScrollView>
       </KeyboardAvoidingView>
 
-      {/* Custom Success Modal */}
+      {/* Success Modal */}
       <Modal visible={showSuccessModal} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
@@ -191,11 +310,17 @@ export default function TripStartScreen() {
             </View>
             <View style={styles.modalBody}>
                <Text style={styles.modalText}>Odometer: <Text style={{fontWeight:'700'}}>{odometer} km</Text></Text>
-               {linkedTaskCount > 0 && (
-                 <Text style={styles.modalText}>📦 <Text style={{fontWeight:'700'}}>{linkedTaskCount} task{linkedTaskCount > 1 ? 's' : ''}</Text> linked to this trip</Text>
+               {acceptedTasks[0] && (
+                 <>
+                   <Text style={styles.modalText}>From: <Text style={{fontWeight:'700'}}>{acceptedTasks[0].pickupLocation}</Text></Text>
+                   <Text style={styles.modalText}>To: <Text style={{fontWeight:'700'}}>{acceptedTasks[0].deliveryLocation}</Text></Text>
+                 </>
                )}
+               {linkedTaskCount > 0 && (
+                 <Text style={styles.modalText}>📦 <Text style={{fontWeight:'700'}}>{linkedTaskCount} task{linkedTaskCount > 1 ? 's' : ''}</Text> linked</Text>
+               )}
+               {photo && <Text style={styles.modalText}>📷 Odometer photo captured</Text>}
                <Text style={styles.modalText}>GPS tracking is now active.</Text>
-               <Text style={styles.modalText}>Drive safely!</Text>
             </View>
             <View style={styles.modalFooter}>
               <TouchableOpacity 
@@ -213,80 +338,189 @@ export default function TripStartScreen() {
   );
 }
 
-function CheckItem({ label, done }: { label: string; done: boolean }) {
-  return (
-    <View style={styles.checkItem}>
-      <Text style={styles.checkIcon}>{done ? '✅' : '⬜'}</Text>
-      <Text style={[styles.checkLabel, done && styles.checkLabelDone]}>{label}</Text>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.BG_PRIMARY },
   header: {
-    backgroundColor: COLORS.PRIMARY, paddingHorizontal: SPACING.XL,
-    paddingTop: SPACING.XXXL + SPACING.MD, paddingBottom: SPACING.LG,
-    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',
+    backgroundColor: COLORS.WHITE,
+    paddingHorizontal: SPACING.XL,
+    paddingTop: SPACING.XXXL + SPACING.MD,
+    paddingBottom: SPACING.MD,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  backBtn: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, fontWeight: '600' },
-  title: { fontSize: FONT_SIZES.XL, fontWeight: '700', color: COLORS.WHITE },
-  content: { flex: 1, padding: SPACING.XL },
-  infoBanner: {
-    backgroundColor: COLORS.PRIMARY + '10', borderRadius: RADIUS.LG,
-    padding: SPACING.LG, flexDirection: 'row', alignItems: 'flex-start',
-    marginBottom: SPACING.XL, borderWidth: 1, borderColor: COLORS.PRIMARY + '20',
+  backBtnWrapper: { width: 40, justifyContent: 'center' },
+  backBtn: { color: COLORS.GRAY_900, fontSize: FONT_SIZES.XXL, fontWeight: '400' },
+  headerTitleContainer: { flexDirection: 'row', alignItems: 'center' },
+  headerIcon: { width: 32, height: 32, marginRight: SPACING.SM, resizeMode: 'contain' },
+  title: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: '#5D1115' },
+  content: { flex: 1, paddingHorizontal: SPACING.LG, paddingTop: SPACING.MD },
+  
+  // Top info card
+  topInfoCard: {
+    backgroundColor: '#72252A',
+    borderRadius: RADIUS.LG,
+    paddingVertical: SPACING.XL,
+    paddingHorizontal: SPACING.LG,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: SPACING.LG,
+    ...SHADOWS.MD,
   },
-  infoIcon: { fontSize: 28, marginRight: SPACING.MD },
-  infoContent: { flex: 1 },
-  infoTitle: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.PRIMARY, marginBottom: SPACING.XS },
-  infoText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_600, lineHeight: 18 },
-  label: { fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.GRAY_700, marginBottom: SPACING.SM },
-  odometerInput: {
-    backgroundColor: COLORS.WHITE, borderWidth: 1.5, borderColor: COLORS.GRAY_200,
-    borderRadius: RADIUS.LG, paddingHorizontal: SPACING.LG, paddingVertical: SPACING.LG,
-    fontSize: FONT_SIZES.XXL, fontWeight: '700', color: COLORS.GRAY_900,
-    textAlign: 'center', marginBottom: SPACING.MD, ...SHADOWS.SM,
+  locationPinIcon: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    width: 40, height: 40,
+    borderRadius: RADIUS.MD,
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: SPACING.MD,
   },
-  readingPreview: {
-    backgroundColor: COLORS.SUCCESS + '10', borderRadius: RADIUS.MD,
-    padding: SPACING.MD, alignItems: 'center', marginBottom: SPACING.XL,
-    borderWidth: 1, borderColor: COLORS.SUCCESS + '30',
+  topInfoValue: { fontSize: 22, fontWeight: '700', color: COLORS.WHITE, marginBottom: 2 },
+  topInfoSub: { fontSize: FONT_SIZES.SM, color: COLORS.WHITE, opacity: 0.9 },
+
+  // Odometer Card
+  odometerCard: {
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.LG,
+    padding: SPACING.MD,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: SPACING.LG,
+    ...SHADOWS.SM,
   },
-  readingPreviewLabel: { fontSize: FONT_SIZES.XS, color: COLORS.SUCCESS, fontWeight: '600' },
-  readingPreviewValue: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: COLORS.SUCCESS },
-  photoContainer: { alignItems: 'center', marginBottom: SPACING.XL },
-  photo: { width: '100%', height: 200, borderRadius: RADIUS.LG, marginBottom: SPACING.MD },
+  odometerIconWrapper: {
+    width: 80, height: 80,
+    justifyContent: 'center', alignItems: 'center',
+    marginRight: SPACING.MD,
+  },
+  odometerIconImage: { width: '100%', height: '100%', resizeMode: 'contain' },
+  odometerInputWrapper: { flex: 1 },
+  odometerTitle: {
+    fontSize: FONT_SIZES.MD, fontWeight: '700',
+    color: '#0D7B74', marginBottom: SPACING.SM,
+  },
+  odometerInputContainer: {
+    flexDirection: 'row', alignItems: 'center',
+    borderWidth: 1.5, borderColor: '#0D7B74',
+    borderRadius: RADIUS.MD,
+    paddingHorizontal: SPACING.MD, paddingVertical: SPACING.SM,
+  },
+  odometerInput: { flex: 1, fontSize: FONT_SIZES.MD, color: COLORS.GRAY_900 },
+  editIcon: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_400 },
+
+  // Section label
+  sectionLabel: {
+    fontSize: FONT_SIZES.MD, fontWeight: '700',
+    color: '#3A1F1F', marginBottom: SPACING.SM, marginTop: SPACING.XS,
+  },
+
+  // Photo
+  photoContainer: { alignItems: 'center', marginBottom: SPACING.LG },
+  photo: { width: '100%', height: 180, borderRadius: RADIUS.LG, marginBottom: SPACING.SM },
   retakeBtn: {
     paddingHorizontal: SPACING.LG, paddingVertical: SPACING.SM,
     borderWidth: 1, borderColor: COLORS.PRIMARY, borderRadius: RADIUS.MD,
   },
-  retakeBtnText: { color: COLORS.PRIMARY, fontWeight: '600' },
+  retakeBtnText: { color: COLORS.PRIMARY, fontWeight: '600', fontSize: FONT_SIZES.SM },
   photoPlaceholder: {
     backgroundColor: COLORS.WHITE, borderWidth: 2, borderColor: COLORS.GRAY_200,
-    borderStyle: 'dashed', borderRadius: RADIUS.LG, padding: SPACING.XXL,
-    alignItems: 'center', marginBottom: SPACING.XL,
+    borderStyle: 'dashed', borderRadius: RADIUS.LG, padding: SPACING.XL,
+    alignItems: 'center', marginBottom: SPACING.LG,
   },
-  photoPlaceholderIcon: { fontSize: 48, marginBottom: SPACING.SM },
-  photoPlaceholderTitle: { fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_700 },
-  photoPlaceholderText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, textAlign: 'center', marginTop: SPACING.XS },
-  checklist: {
+  photoPlaceholderIcon: { fontSize: 40, marginBottom: SPACING.SM },
+  photoPlaceholderText: { fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_600 },
+  photoPlaceholderHint: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_400, marginTop: 4 },
+
+  // No task
+  noTaskCard: {
     backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
-    padding: SPACING.LG, marginBottom: SPACING.XL, ...SHADOWS.SM,
+    padding: SPACING.XXL, alignItems: 'center',
+    ...SHADOWS.SM, marginBottom: SPACING.LG,
   },
-  checklistTitle: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.GRAY_900, marginBottom: SPACING.MD },
-  checkItem: { flexDirection: 'row', alignItems: 'center', paddingVertical: SPACING.SM },
-  checkIcon: { fontSize: 18, marginRight: SPACING.MD },
-  checkLabel: { fontSize: FONT_SIZES.MD, color: COLORS.GRAY_600 },
-  checkLabelDone: { color: COLORS.GRAY_900, fontWeight: '500' },
-  startBtn: {
-    backgroundColor: COLORS.SUCCESS, paddingVertical: SPACING.LG,
-    borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL,
-    flexDirection: 'row', justifyContent: 'center', gap: SPACING.SM, ...SHADOWS.MD,
+  noTaskIcon: { fontSize: 48, marginBottom: SPACING.SM },
+  noTaskTitle: { fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_700, marginBottom: SPACING.XS },
+  noTaskSub: {
+    fontSize: FONT_SIZES.SM, color: COLORS.GRAY_400,
+    textAlign: 'center', lineHeight: 20, paddingHorizontal: SPACING.MD,
   },
-  startBtnIcon: { fontSize: 24 },
-  startBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.XL, fontWeight: '700' },
-  // Modal Styles
+
+  // Task Card (like Task Details screen)
+  taskCard: {
+    backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
+    padding: SPACING.LG, marginBottom: SPACING.MD,
+    ...SHADOWS.SM, borderWidth: 1, borderColor: COLORS.GRAY_100,
+  },
+  taskCardHeader: {
+    flexDirection: 'row', justifyContent: 'space-between',
+    alignItems: 'center', marginBottom: SPACING.MD,
+  },
+  taskStatusBadge: {
+    paddingHorizontal: SPACING.MD, paddingVertical: SPACING.XS,
+    borderRadius: RADIUS.FULL,
+  },
+  taskStatusText: { fontSize: FONT_SIZES.XS, fontWeight: '700' },
+  taskPriorityChip: {
+    paddingHorizontal: SPACING.MD, paddingVertical: SPACING.XS,
+    borderRadius: RADIUS.SM,
+  },
+  taskPriorityText: { fontSize: 10, fontWeight: '800', color: COLORS.WHITE },
+
+  // Route inside task card
+  taskRoute: {
+    marginBottom: SPACING.MD,
+  },
+  taskRouteRow: {
+    flexDirection: 'row', alignItems: 'center',
+  },
+  taskRouteDot: {
+    width: 12, height: 12, borderRadius: 6,
+    marginRight: SPACING.MD,
+  },
+  taskRouteLabel: {
+    fontSize: 10, fontWeight: '800', color: COLORS.GRAY_400,
+    letterSpacing: 0.8, marginBottom: 1,
+  },
+  taskRouteValue: {
+    fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_900,
+  },
+  taskRouteLine: {
+    width: 2, height: 20, backgroundColor: COLORS.GRAY_200,
+    marginLeft: 5, marginVertical: 4,
+  },
+
+  // Details table
+  taskDetails: {
+    borderTopWidth: 1, borderTopColor: COLORS.GRAY_100,
+    paddingTop: SPACING.SM,
+  },
+  taskDetailRow: {
+    flexDirection: 'row', alignItems: 'center',
+    paddingVertical: 6,
+    borderBottomWidth: 1, borderBottomColor: COLORS.GRAY_50,
+  },
+  taskDetailIcon: { fontSize: 14, marginRight: SPACING.SM, width: 20 },
+  taskDetailLabel: {
+    fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500, fontWeight: '500',
+    width: 90,
+  },
+  taskDetailValue: {
+    fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.GRAY_900,
+    flex: 1, textAlign: 'right',
+  },
+
+  // Start Trip Button
+  requestBtn: {
+    backgroundColor: '#4A0404',
+    paddingVertical: SPACING.LG,
+    borderRadius: 30,
+    alignItems: 'center', justifyContent: 'center',
+    ...SHADOWS.MD,
+  },
+  requestBtnContent: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM },
+  requestBtnIcon: { fontSize: 20, color: COLORS.WHITE },
+  requestBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+
+  // Modal
   modalOverlay: {
     flex: 1, backgroundColor: 'rgba(0,0,0,0.5)',
     justifyContent: 'center', alignItems: 'center',

@@ -38,13 +38,13 @@ export default function SupervisorNotificationsScreen() {
       const pending = expenses.filter(e => e.status === 'pending');
       const mapped: AppNotification[] = pending.map(e => ({
         id: `fuel_${e.id}`,
-        userId: user.uid,
+        recipientId: user.uid,
         type: 'fuel_submitted',
         title: 'Fuel Approval Required',
         body: `${e.driverName || 'A driver'} requested approval for ${e.litres}L of fuel (LKR ${e.totalCost.toFixed(0)})`,
         createdAt: e.createdAt || Date.now(),
         read: false,
-        data: { expenseId: e.id }
+        data: { expenseId: e.id || '' }
       }));
       setFuelNotifications(mapped);
     })();

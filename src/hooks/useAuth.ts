@@ -45,7 +45,11 @@ export function useAuth() {
     setLoading(true);
     try {
       const p = await registerUser(email, password, name, phone, role, extra);
-      setProfile(p);
+      if (p.status === 'pending') {
+        await logoutUser();
+      } else {
+        setProfile(p);
+      }
       return p;
     } finally {
       setLoading(false);

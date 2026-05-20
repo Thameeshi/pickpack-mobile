@@ -45,6 +45,7 @@ export default function AssignTaskScreen() {
   const [driverTripStatus, setDriverTripStatus] = useState<Record<string, boolean>>({});
   const [driverTaskStatus, setDriverTaskStatus] = useState<Record<string, string>>({});
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
+  const [middleLocations, setMiddleLocations] = useState<string[]>([]);
 
   // Load existing task for editing
   useEffect(() => {
@@ -63,6 +64,7 @@ export default function AssignTaskScreen() {
           setEstimatedTime(task.estimatedDeliveryTime || '');
           setSelectedDriverId(task.assignedDriverId || '');
           setSelectedDriverName(task.assignedDriverName || '');
+          setMiddleLocations(task.middleLocations || []);
         }
       })();
     }
@@ -106,6 +108,7 @@ export default function AssignTaskScreen() {
           priority,
           itemCount: itemCount ? Number(itemCount) : undefined,
           estimatedDeliveryTime: estimatedTime,
+          middleLocations,
         });
 
         await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName);
@@ -127,6 +130,7 @@ export default function AssignTaskScreen() {
           supervisorName: profile?.name || 'Supervisor',
           itemCount: itemCount ? Number(itemCount) : undefined,
           estimatedDeliveryTime: estimatedTime,
+          middleLocations,
         });
 
         Alert.alert('✅ Created', `Task created successfully${selectedDriverId ? ' and assigned to driver' : ''}`, [
@@ -262,11 +266,22 @@ export default function AssignTaskScreen() {
                 <View style={styles.routeLineContainer}>
                   <View style={styles.routeDotPickup} />
                   <View style={styles.routeLine} />
+                  {middleLocations.map((_, index) => (
+                    <React.Fragment key={`dot-${index}`}>
+                      <View style={styles.routeDotMiddle} />
+                      <View style={styles.routeLine} />
+                    </React.Fragment>
+                  ))}
                   <View style={styles.routeDotDelivery} />
                 </View>
                 <View style={styles.routeInputs}>
                   <View style={styles.inputGroup}>
-                    <Text style={styles.label}>Pickup Location (Warehouse) *</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.XS }}>
+                      <Text style={[styles.label, { marginBottom: 0 }]}>Pickup Location (Warehouse) *</Text>
+                      <TouchableOpacity onPress={() => setMiddleLocations([...middleLocations, ''])} style={{ paddingHorizontal: SPACING.XS }}>
+                        <Text style={{ fontSize: FONT_SIZES.LG, color: COLORS.PRIMARY, fontWeight: 'bold' }}>+</Text>
+                      </TouchableOpacity>
+                    </View>
                     <TextInput
                       style={styles.input}
                       placeholder="e.g. Central Warehouse, Port Road"
@@ -275,6 +290,32 @@ export default function AssignTaskScreen() {
                       onChangeText={setPickupLocation}
                     />
                   </View>
+
+                  {middleLocations.map((loc, index) => (
+                    <View key={`loc-${index}`} style={[styles.inputGroup, { marginTop: SPACING.MD }]}>
+                      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.XS }}>
+                        <Text style={[styles.label, { marginBottom: 0 }]}>Stop {index + 1}</Text>
+                        <TouchableOpacity onPress={() => {
+                          const newLocs = [...middleLocations];
+                          newLocs.splice(index, 1);
+                          setMiddleLocations(newLocs);
+                        }}>
+                          <Text style={{ fontSize: FONT_SIZES.SM, color: COLORS.DANGER, fontWeight: '600' }}>Remove</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <TextInput
+                        style={styles.input}
+                        placeholder={`e.g. Stop ${index + 1} Address`}
+                        placeholderTextColor={COLORS.GRAY_400}
+                        value={loc}
+                        onChangeText={(text) => {
+                          const newLocs = [...middleLocations];
+                          newLocs[index] = text;
+                          setMiddleLocations(newLocs);
+                        }}
+                      />
+                    </View>
+                  ))}
                   
                   <View style={[styles.inputGroup, { marginTop: SPACING.MD }]}>
                     <Text style={styles.label}>Delivery Location (Supermarket) *</Text>
@@ -471,6 +512,10 @@ const styles = StyleSheet.create({
   routeDotDelivery: {
     width: 14, height: 14, borderRadius: 7, backgroundColor: COLORS.SUCCESS,
     borderWidth: 3, borderColor: COLORS.SUCCESS + '40',
+  },
+  routeDotMiddle: {
+    width: 12, height: 12, borderRadius: 6, backgroundColor: COLORS.WARNING,
+    borderWidth: 2, borderColor: COLORS.WARNING + '40',
   },
   routeLine: {
     flex: 1, width: 2, backgroundColor: COLORS.GRAY_300,

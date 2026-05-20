@@ -56,6 +56,9 @@ export default function NotificationsScreen() {
       case 'fuel_rejected':
         router.push('/driver/fuelHistory');
         break;
+      case 'chat_message':
+        router.push('/driver/chatList');
+        break;
       default:
         // For generic/chat notifications, go to task if data has taskId
         if (notification.data?.taskId) {

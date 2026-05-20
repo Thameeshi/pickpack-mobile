@@ -19,7 +19,7 @@ export default function DriverProfileScreen() {
     { icon: '🔢', label: 'Odometer Readings', route: '/driver/odometer' },
     { icon: '⛽', label: 'Fuel Expenses', route: '/driver/fuelHistory' },
     { icon: '📷', label: 'QR Scanner', route: '/driver/qrScanner' },
-    { icon: '💬', label: 'Messages', route: '/driver/chat' },
+    { icon: '💬', label: 'Messages', route: '/driver/chatList' },
   ];
 
   return (
