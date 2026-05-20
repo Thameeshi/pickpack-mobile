@@ -104,7 +104,7 @@ export default function DriverDetailsScreen() {
 
           <View style={[styles.statusBadge, { backgroundColor: isPending ? COLORS.WARNING + '20' : COLORS.SUCCESS + '20' }]}>
             <Text style={[styles.statusText, { color: isPending ? COLORS.WARNING : COLORS.SUCCESS }]}>
-              {isPending ? '⏳ Pending Approval' : '✅ Approved'}
+              {isPending ? 'Pending Approval' : 'Approved'}
             </Text>
           </View>
 
@@ -123,12 +123,12 @@ export default function DriverDetailsScreen() {
                   { text: 'Approve', onPress: async () => {
                     await setAccountStatus(driverId!, 'approved', user?.uid);
                     setDriver({ ...driver, status: 'approved' });
-                    Alert.alert('✅ Approved!');
+                    Alert.alert('Approved!');
                   }},
                 ]);
               }}
             >
-              <Text style={styles.approveBtnText}>✅ Approve Driver</Text>
+              <Text style={styles.approveBtnText}>Approve Driver</Text>
             </TouchableOpacity>
           )}
         </View>

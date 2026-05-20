@@ -59,9 +59,15 @@ export default function LoginScreen() {
           'Your account registration was rejected. Please contact the administrator.',
           [{ text: 'OK' }]
         );
-        return;
       }
-      // Success — navigation handled by index.tsx
+      // Success — route directly to the appropriate dashboard
+      if (userProfile?.role === 'driver') {
+        router.replace('/driver/dashboard');
+      } else if (userProfile?.role === 'supervisor' || userProfile?.role === 'superadmin') {
+        router.replace('/supervisor/dashboard');
+      } else {
+        router.replace('/');
+      }
     } catch (error: any) {
       const msg = error.message || 'Login failed';
       if (msg.includes('invalid-credential') || msg.includes('wrong-password')) {

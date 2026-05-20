@@ -240,7 +240,7 @@ export default function AssignTaskScreen() {
           </>
         ) : (
           <>
-            <SectionCard title="Task Priority" icon="⚡">
+            <SectionCard title="Task Priority">
               <View style={styles.priorityRow}>
                 {(['LOW', 'MEDIUM', 'HIGH'] as TaskPriority[]).map(p => (
                   <TouchableOpacity
@@ -254,14 +254,14 @@ export default function AssignTaskScreen() {
                     onPress={() => setPriority(p)}
                   >
                     <Text style={[styles.priorityText, priority === p && { color: COLORS.WHITE }]}>
-                      {p === 'HIGH' ? '🔴' : p === 'MEDIUM' ? '🟡' : '🟢'} {p}
+                      {p}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </SectionCard>
 
-            <SectionCard title="Route Details" icon="📍">
+            <SectionCard title="Route Details">
               <View style={styles.routeContainer}>
                 <View style={styles.routeLineContainer}>
                   <View style={styles.routeDotPickup} />
@@ -331,7 +331,7 @@ export default function AssignTaskScreen() {
               </View>
             </SectionCard>
 
-            <SectionCard title="Package Details" icon="📦">
+            <SectionCard title="Package Details">
               <Text style={styles.label}>Package Items & Description</Text>
               <View style={styles.packageSuggestions}>
                 {PACKAGE_TYPES.map(type => (
@@ -423,7 +423,7 @@ export default function AssignTaskScreen() {
                   <ActivityIndicator color={COLORS.WHITE} />
                 ) : (
                   <Text style={styles.submitText}>
-                    {isEditing ? '💾 Save Changes' : '✅ Create Task'}
+                    {isEditing ? 'Save Changes' : 'Create Task'}
                   </Text>
                 )}
               </TouchableOpacity>

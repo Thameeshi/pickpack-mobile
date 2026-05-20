@@ -41,10 +41,19 @@ export default function FuelExpenseScreen() {
   }, [user]);
 
   const handleTakeReceipt = async () => {
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: true, aspect: [3, 4], quality: 0.7,
-    });
-    if (!result.canceled) setReceipt(result.assets[0].uri);
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Required', 'You need to allow camera access to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: true, aspect: [3, 4], quality: 0.7,
+      });
+      if (!result.canceled) setReceipt(result.assets[0].uri);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
   };
 
   const handleSubmit = async () => {

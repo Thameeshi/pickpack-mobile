@@ -69,11 +69,20 @@ export default function RepairRequestScreen() {
       Alert.alert('Limit', 'Maximum 5 photos allowed');
       return;
     }
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: false, quality: 0.7,
-    });
-    if (!result.canceled) {
-      setPhotos(prev => [...prev, result.assets[0].uri]);
+    try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Required', 'You need to allow camera access to take a photo.');
+        return;
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        allowsEditing: false, quality: 0.7,
+      });
+      if (!result.canceled) {
+        setPhotos(prev => [...prev, result.assets[0].uri]);
+      }
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
     }
   };
 

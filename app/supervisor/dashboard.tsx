@@ -64,7 +64,7 @@ export default function SupervisorDashboardScreen() {
 
   // Quick Action Buttons
   const ACTIONS = [
-    { id: 'new', label: 'New Trip', image: require('../../assets/icons/new-trip.png'), route: '/supervisor/assignTask' },
+    { id: 'new', label: 'Assign Trip', image: require('../../assets/icons/new-trip.png'), route: '/supervisor/assignTask' },
     { id: 'track', label: 'Track', image: require('../../assets/icons/track.png'), route: '/supervisor/driverTracking' },
     { id: 'add-driver', label: 'Add Driver', image: require('../../assets/icons/driver.png'), route: '/supervisor/addDriver' },
     { id: 'fuel', label: 'Fuel', image: require('../../assets/icons/fuel.png'), route: '/supervisor/fuelApprovals' },
@@ -100,7 +100,7 @@ export default function SupervisorDashboardScreen() {
         <View style={styles.goldLine} />
       </View>
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={handleRefresh} colors={[COLORS.PRIMARY]} />}
         showsVerticalScrollIndicator={false}
@@ -109,7 +109,7 @@ export default function SupervisorDashboardScreen() {
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Ongoing trips</Text>
           {loading && !refreshing ? (
-             <ActivityIndicator size="large" color={COLORS.PRIMARY} style={{ marginVertical: SPACING.XL }} />
+            <ActivityIndicator size="large" color={COLORS.PRIMARY} style={{ marginVertical: SPACING.XL }} />
           ) : ongoingTrips.length > 0 ? (
             <View style={{ position: 'relative' }}>
               <FlatList
@@ -123,24 +123,24 @@ export default function SupervisorDashboardScreen() {
                 decelerationRate="fast"
                 onMomentumScrollEnd={onMomentumScrollEnd}
                 renderItem={({ item: t }) => (
-                  <TouchableOpacity 
+                  <TouchableOpacity
                     style={[styles.tripCard, { width: width * 0.85 }]}
                     activeOpacity={0.8}
                     onPress={() => router.push('/supervisor/driverTracking')}
                   >
                     <View style={styles.tripCardHeader}>
-                       <View style={[styles.statusBadge, { backgroundColor: t.status === 'arrived' ? COLORS.WARNING + '20' : COLORS.SECONDARY + '20' }]}>
-                         <Text style={[styles.statusText, { color: t.status === 'arrived' ? COLORS.WARNING : COLORS.SECONDARY }]}>
-                           {t.status === 'arrived' ? '📍 Arrived' : '🚚 In Transit'}
-                         </Text>
-                       </View>
-                       {t.priority && (
-                         <View style={[styles.priorityBadge, { backgroundColor: t.priority === 'HIGH' ? COLORS.DANGER : t.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS }]}>
-                           <Text style={styles.priorityText}>{t.priority}</Text>
-                         </View>
-                       )}
+                      <View style={[styles.statusBadge, { backgroundColor: t.status === 'arrived' ? COLORS.WARNING + '20' : COLORS.SECONDARY + '20' }]}>
+                        <Text style={[styles.statusText, { color: t.status === 'arrived' ? COLORS.WARNING : COLORS.SECONDARY }]}>
+                          {t.status === 'arrived' ? '📍 Arrived' : '🚚 In Transit'}
+                        </Text>
+                      </View>
+                      {t.priority && (
+                        <View style={[styles.priorityBadge, { backgroundColor: t.priority === 'HIGH' ? COLORS.DANGER : t.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS }]}>
+                          <Text style={styles.priorityText}>{t.priority}</Text>
+                        </View>
+                      )}
                     </View>
-                    
+
                     <View style={styles.tripRoute}>
                       <View style={styles.routeRow}>
                         <View style={[styles.routeDot, { backgroundColor: COLORS.PRIMARY }]} />
@@ -160,14 +160,14 @@ export default function SupervisorDashboardScreen() {
                   </TouchableOpacity>
                 )}
               />
-              
+
               {/* Left Arrow */}
               {currentIndex > 0 && (
                 <TouchableOpacity style={[styles.navArrow, { left: SPACING.SM }]} onPress={shiftLeft}>
                   <Text style={styles.navArrowText}>{'<'}</Text>
                 </TouchableOpacity>
               )}
-              
+
               {/* Right Arrow */}
               {currentIndex < ongoingTrips.length - 1 && (
                 <TouchableOpacity style={[styles.navArrow, { right: SPACING.SM }]} onPress={shiftRight}>
@@ -177,27 +177,27 @@ export default function SupervisorDashboardScreen() {
             </View>
           ) : (
             <View style={styles.emptyCarousel}>
-               <Text style={styles.emptyIcon}>🛋️</Text>
-               <Text style={styles.emptyText}>No ongoing trips right now.</Text>
+              <Text style={styles.emptyIcon}>🛋️</Text>
+              <Text style={styles.emptyText}>No ongoing trips right now.</Text>
             </View>
           )}
         </View>
 
         {/* Action Grid */}
         <View style={styles.gridContainer}>
-           {ACTIONS.map(action => (
-             <TouchableOpacity 
-               key={action.id} 
-               style={styles.gridItemWrapper}
-               activeOpacity={0.7}
-               onPress={() => router.push(action.route as any)}
-             >
-                <View style={styles.gridItemCard}>
-                   <Image source={action.image} style={styles.gridImage} />
-                </View>
-                <Text style={styles.gridLabel}>{action.label}</Text>
-             </TouchableOpacity>
-           ))}
+          {ACTIONS.map(action => (
+            <TouchableOpacity
+              key={action.id}
+              style={styles.gridItemWrapper}
+              activeOpacity={0.7}
+              onPress={() => router.push(action.route as any)}
+            >
+              <View style={styles.gridItemCard}>
+                <Image source={action.image} style={styles.gridImage} />
+              </View>
+              <Text style={styles.gridLabel}>{action.label}</Text>
+            </TouchableOpacity>
+          ))}
         </View>
       </ScrollView>
     </View>
@@ -238,9 +238,9 @@ const styles = StyleSheet.create({
 
   // Ongoing Trips Section
   section: { marginTop: SPACING.XL, marginBottom: SPACING.XL },
-  sectionTitle: { 
-    fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_900, 
-    paddingHorizontal: SPACING.XL, marginBottom: SPACING.MD 
+  sectionTitle: {
+    fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_900,
+    paddingHorizontal: SPACING.XL, marginBottom: SPACING.MD
   },
   tripCard: {
     backgroundColor: COLORS.WHITE, borderRadius: RADIUS.XL, padding: SPACING.LG,
@@ -299,7 +299,7 @@ const styles = StyleSheet.create({
   },
   gridItemCard: {
     width: '100%',
-    aspectRatio: 1,
+    aspectRatio: 1.2,
     backgroundColor: COLORS.WHITE,
     borderRadius: RADIUS.XL,
     justifyContent: 'center',
@@ -307,14 +307,14 @@ const styles = StyleSheet.create({
     ...SHADOWS.MD,
     marginBottom: SPACING.SM,
   },
-  gridImage: { 
-    width: 64, 
-    height: 64, 
-    resizeMode: 'contain' 
+  gridImage: {
+    width: 56,
+    height: 56,
+    resizeMode: 'contain'
   },
-  gridLabel: { 
-    fontSize: FONT_SIZES.MD, 
-    fontWeight: '700', 
+  gridLabel: {
+    fontSize: FONT_SIZES.MD,
+    fontWeight: '700',
     color: COLORS.GRAY_800,
     textAlign: 'center'
   },

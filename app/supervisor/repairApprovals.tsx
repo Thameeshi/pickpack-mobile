@@ -54,7 +54,7 @@ export default function RepairApprovalsScreen() {
   const handleApprove = async (id: string) => {
     try {
       await updateRepairStatus(id, 'approved', user?.uid);
-      Alert.alert('✅ Approved', 'Repair request has been approved.');
+      Alert.alert('Approved', 'Repair request has been approved.');
       loadRepairs();
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -71,7 +71,7 @@ export default function RepairApprovalsScreen() {
     if (!rejectingId) return;
     try {
       await updateRepairStatus(rejectingId, 'rejected', user?.uid, rejectionReason.trim() || undefined);
-      Alert.alert('❌ Rejected', 'Repair request has been rejected.');
+      Alert.alert('Rejected', 'Repair request has been rejected.');
       setRejectModalVisible(false);
       loadRepairs();
     } catch (e: any) {
@@ -156,13 +156,13 @@ export default function RepairApprovalsScreen() {
                     style={[styles.actionBtn, { backgroundColor: COLORS.SUCCESS }]}
                     onPress={() => handleApprove(item.id!)}
                   >
-                    <Text style={styles.actionText}>✅ Approve</Text>
+                    <Text style={styles.actionText}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: COLORS.DANGER }]}
                     onPress={() => handleRejectStart(item.id!)}
                   >
-                    <Text style={styles.actionText}>❌ Reject</Text>
+                    <Text style={styles.actionText}>Reject</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -176,7 +176,7 @@ export default function RepairApprovalsScreen() {
                     color: item.status === 'approved' ? COLORS.SUCCESS : COLORS.DANGER,
                     fontWeight: '600', fontSize: FONT_SIZES.SM,
                   }}>
-                    {item.status === 'approved' ? '✅ Approved' : '❌ Rejected'}
+                    {item.status === 'approved' ? 'Approved' : 'Rejected'}
                   </Text>
                   {item.rejectionReason ? (
                     <Text style={{ color: COLORS.DANGER, fontSize: FONT_SIZES.XS, marginTop: 2 }}>
@@ -200,7 +200,7 @@ export default function RepairApprovalsScreen() {
       <Modal visible={rejectModalVisible} transparent animationType="fade">
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>❌ Reject Repair Request</Text>
+            <Text style={styles.modalTitle}>Reject Repair Request</Text>
             <Text style={styles.modalLabel}>Reason (optional)</Text>
             <TextInput
               style={styles.modalInput}

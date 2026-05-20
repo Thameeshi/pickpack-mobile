@@ -767,11 +767,11 @@ const styles = StyleSheet.create({
   },
   gridCard: {
     width: '48%', backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
-    padding: SPACING.XL, alignItems: 'center', marginBottom: SPACING.MD,
-    justifyContent: 'center', ...SHADOWS.MD, minHeight: 120,
+    padding: SPACING.LG, alignItems: 'center', marginBottom: SPACING.MD,
+    justifyContent: 'center', ...SHADOWS.MD, minHeight: 125,
   },
-  gridIcon: { fontSize: 32, marginBottom: SPACING.SM },
-  gridImageIcon: { width: 64, height: 64, marginBottom: SPACING.SM, resizeMode: 'contain' },
+  gridIcon: { fontSize: 28, marginBottom: SPACING.SM },
+  gridImageIcon: { width: 56, height: 56, marginBottom: SPACING.SM, resizeMode: 'contain' },
   gridCardLabel: { fontSize: FONT_SIZES.SM, fontWeight: '700', color: COLORS.GRAY_800 },
 
   // ═══ Fuel Summary ═══
