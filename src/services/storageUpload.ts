@@ -1,19 +1,18 @@
 /**
  * storageUpload.ts
  *
- * Uploads files to Firebase Storage using the REST API + FileSystem.uploadAsync.
- * This approach is fully native — no Blob, no FileReader, no Firebase Storage SDK —
- * and works reliably in Expo Go (New Architecture) and production builds.
+ * Uploads files to Cloudinary using the REST API via native fetch.
+ * This approach is fully native — works reliably in Expo Go and production builds.
  */
 import * as FileSystem from 'expo-file-system/legacy';
-import { FileSystemUploadType } from 'expo-file-system/legacy';
-import { auth } from './firebase';
 
-// Your Firebase Storage bucket (from .env)
-const BUCKET = 'pickpack-a981b.firebasestorage.app';
+// Cloudinary configuration
+const CLOUDINARY_CLOUD_NAME = 'dvv9qjg43';
+const CLOUDINARY_UPLOAD_PRESET = 'pickpack_images'; // Must be created as "Unsigned" preset
+const CLOUDINARY_API_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
 /**
- * Uploads a local file URI to Firebase Storage via REST API.
+ * Uploads a local file URI to Cloudinary via REST API.
  * Returns the public download URL.
  */
 export async function uploadFileToStorage(
@@ -21,46 +20,47 @@ export async function uploadFileToStorage(
   storagePath: string,
   contentType: 'image/jpeg' | 'image/png' = 'image/jpeg',
 ): Promise<string> {
-  const currentUser = auth.currentUser;
-  if (!currentUser) throw new Error('User not authenticated');
+  console.log('🚀 Starting upload to Cloudinary:', { storagePath, contentType });
 
-  const idToken = await currentUser.getIdToken();
+  try {
+    // Read file as base64
+    const fileData = await FileSystem.readAsStringAsync(localUri, {
+      encoding: FileSystem.EncodingType.Base64,
+    });
 
-  const uploadUrl =
-    `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o` +
-    `?name=${encodeURIComponent(storagePath)}`;
+    // Create FormData with all required fields
+    const formData = new FormData();
+    formData.append('file', `data:${contentType};base64,${fileData}`);
+    formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+    formData.append('public_id', storagePath.replace(/\//g, '_').replace(/\.[^.]+$/, ''));
 
-  const result = await FileSystem.uploadAsync(uploadUrl, localUri, {
-    httpMethod: 'POST',
-    uploadType: FileSystemUploadType.BINARY_CONTENT,
-    headers: {
-      Authorization: `Bearer ${idToken}`,
-      'Content-Type': contentType,
-    },
-  });
+    console.log('📤 Sending request to Cloudinary...');
 
-  if (result.status < 200 || result.status >= 300) {
-    throw new Error(`Storage upload failed (${result.status}): ${result.body}`);
+    const response = await fetch(CLOUDINARY_API_URL, {
+      method: 'POST',
+      body: formData,
+    });
+
+    console.log('📡 Upload response:', { status: response.status });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      const errorMsg = errorData?.error?.message || `Upload failed (${response.status})`;
+      console.error('❌ Upload error:', errorMsg);
+      throw new Error(errorMsg);
+    }
+
+    const data = await response.json() as { secure_url?: string; url?: string };
+    const downloadUrl = data.secure_url || data.url;
+
+    if (!downloadUrl) {
+      throw new Error('No URL returned from Cloudinary');
+    }
+
+    console.log('✅ Upload successful, download URL:', downloadUrl);
+    return downloadUrl;
+  } catch (error: any) {
+    console.error('❌ Cloudinary upload error:', error.message);
+    throw new Error(`Upload failed: ${error.message}`);
   }
-
-  const data = JSON.parse(result.body) as { downloadTokens?: string; name: string };
-  const encodedPath = encodeURIComponent(storagePath);
-
-  if (data.downloadTokens) {
-    return (
-      `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/` +
-      `${encodedPath}?alt=media&token=${data.downloadTokens}`
-    );
-  }
-
-  // Fallback: get token via separate request
-  const metaRes = await fetch(
-    `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/${encodedPath}`,
-    { headers: { Authorization: `Bearer ${idToken}` } },
-  );
-  const meta = await metaRes.json() as { downloadTokens?: string };
-  return (
-    `https://firebasestorage.googleapis.com/v0/b/${BUCKET}/o/` +
-    `${encodedPath}?alt=media&token=${meta.downloadTokens}`
-  );
 }

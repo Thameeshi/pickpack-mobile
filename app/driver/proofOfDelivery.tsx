@@ -100,18 +100,20 @@ export default function ProofOfDeliveryScreen() {
 
     setUploading(true);
     try {
-      // 1. Upload delivery photo (graceful — don't block completion)
+      // 1. Upload delivery photo (REQUIRED — block completion if fails)
       let proofUrl = '';
       try {
         proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
         console.log('✅ Photo uploaded:', proofUrl);
       } catch (uploadErr: any) {
         const msg = uploadErr?.message || String(uploadErr);
-        console.log('❌ Photo upload failed:', msg);
-        Alert.alert('Upload Error (Photo)', msg);
+        console.error('❌ Photo upload failed:', msg);
+        Alert.alert('Upload Error (Photo)', msg + '\n\nPlease check your connection and try again.');
+        setUploading(false);
+        return; // BLOCK — don't proceed without valid photo URL
       }
 
-      // 2. Capture and upload signature
+      // 2. Capture and upload signature (REQUIRED — block completion if fails)
       let signatureUrl: string | undefined;
       if (signatureRef.current) {
         try {
@@ -122,26 +124,30 @@ export default function ProofOfDeliveryScreen() {
           console.log('✅ Signature uploaded:', signatureUrl);
         } catch (e: any) {
           const msg = e?.message || String(e);
-          console.log('❌ Signature upload failed:', msg);
-          Alert.alert('Upload Error (Signature)', msg);
+          console.error('❌ Signature upload failed:', msg);
+          Alert.alert('Upload Error (Signature)', msg + '\n\nPlease try again.');
+          setUploading(false);
+          return; // BLOCK — don't proceed without valid signature URL
         }
       }
 
-      // 3. Upload document if taken
+      // 3. Upload document if taken (OPTIONAL — don't block completion)
       let documentUrl: string | undefined;
       if (document) {
         try {
           documentUrl = await uploadDeliveryDocument(taskId!, document);
           console.log('✅ Document uploaded:', documentUrl);
         } catch (e: any) {
-          console.log('❌ Document upload failed:', e?.message);
+          console.error('❌ Document upload failed:', e?.message);
+          // Document is optional — warn but don't block
+          Alert.alert('Document Upload Warning', 'Document could not be uploaded, but delivery can proceed.');
         }
       }
 
-      // 4. Complete the task (this is the critical operation)
+      // 4. Complete the task with VALID URLs (photo and signature are guaranteed to exist)
       await completeTask(
         taskId!,
-        proofUrl || 'upload_failed',
+        proofUrl, // Now guaranteed to be a valid URL, never 'upload_failed'
         location?.coords?.latitude || 0,
         location?.coords?.longitude || 0,
         signatureUrl,
