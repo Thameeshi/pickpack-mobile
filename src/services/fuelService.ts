@@ -1,9 +1,9 @@
 import {
   collection, addDoc, getDocs, updateDoc, doc, query, where,
 } from 'firebase/firestore';
-import { db, storage } from './firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { FuelExpense, OdometerReading, ExpenseStatus, OdometerType } from '../types';
+import { uploadFileToStorage } from './storageUpload';
+import { db } from './firebase';
 
 // ═══════════════════════════════════════════════════════════════════
 // FUEL EXPENSES
@@ -35,25 +35,14 @@ export async function updateFuelExpenseStatus(
   await updateDoc(doc(db, 'fuelExpenses', expenseId), updates);
 }
 
-// ─── Helper: convert local URI to blob (React Native compatible) ──
-async function uriToBlob(uri: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.onload = () => resolve(xhr.response as Blob);
-    xhr.onerror = () => reject(new Error('Failed to convert image to blob'));
-    xhr.responseType = 'blob';
-    xhr.open('GET', uri, true);
-    xhr.send(null);
-  });
-}
-
 export async function uploadFuelReceipt(
   expenseId: string, imageUri: string
 ): Promise<string> {
-  const blob = await uriToBlob(imageUri);
-  const storageRef = ref(storage, `receipts/${expenseId}/${Date.now()}.jpg`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    imageUri,
+    `receipts/${expenseId}/${Date.now()}.jpg`,
+    'image/jpeg',
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -86,10 +75,11 @@ export async function getTodayOdometerReadings(driverId: string): Promise<Odomet
 export async function uploadOdometerPhoto(
   readingId: string, imageUri: string
 ): Promise<string> {
-  const blob = await uriToBlob(imageUri);
-  const storageRef = ref(storage, `odometer/${readingId}/${Date.now()}.jpg`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    imageUri,
+    `odometer/${readingId}/${Date.now()}.jpg`,
+    'image/jpeg',
+  );
 }
 
 // Calculate daily distance from odometer readings

@@ -94,7 +94,7 @@ export default function SupervisorChatListScreen() {
           onPress={handleNext}
           activeOpacity={0.8}
         >
-          <Text style={styles.nextBtnText}>Next ➡️</Text>
+          <Text style={styles.nextBtnText}>Next</Text>
         </TouchableOpacity>
       </View>
     </View>

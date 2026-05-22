@@ -2,11 +2,11 @@ import {
   collection, addDoc, getDoc, getDocs, updateDoc, deleteDoc,
   doc, query, where,
 } from 'firebase/firestore';
-import { db, storage } from './firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { Task, TaskCreatePayload, TaskStatus } from '../types';
 import { notifyTaskAssigned } from './notificationService';
 import { isDriverOnTrip } from './tripService';
+import { uploadFileToStorage } from './storageUpload';
+import { db } from './firebase';
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 
@@ -204,46 +204,37 @@ export async function updateTaskStatus(
   await updateDoc(doc(db, 'tasks', taskId), updates);
 }
 
-// ─── Helper: convert local URI to blob (React Native compatible) ──
-async function uriToBlob(uri: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.onload = () => resolve(xhr.response as Blob);
-    xhr.onerror = () => reject(new Error('Failed to convert image to blob'));
-    xhr.responseType = 'blob';
-    xhr.open('GET', uri, true);
-    xhr.send(null);
-  });
-}
-
 // ─── Upload proof of delivery ─────────────────────────────────────
 export async function uploadProofOfDelivery(
   taskId: string, imageUri: string, fileName: string
 ): Promise<string> {
-  const blob = await uriToBlob(imageUri);
-  const storageRef = ref(storage, `proofOfDelivery/${taskId}/${fileName}`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    imageUri,
+    `proofOfDelivery/${taskId}/${fileName}`,
+    'image/jpeg',
+  );
 }
 
 // ─── Upload signature ─────────────────────────────────────────────
 export async function uploadSignature(
   taskId: string, signatureUri: string,
 ): Promise<string> {
-  const blob = await uriToBlob(signatureUri);
-  const storageRef = ref(storage, `signatures/${taskId}/${Date.now()}.png`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    signatureUri,
+    `signatures/${taskId}/${Date.now()}.png`,
+    'image/png',
+  );
 }
 
 // ─── Upload delivery document ─────────────────────────────────────
 export async function uploadDeliveryDocument(
   taskId: string, imageUri: string,
 ): Promise<string> {
-  const blob = await uriToBlob(imageUri);
-  const storageRef = ref(storage, `documents/${taskId}/${Date.now()}.jpg`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    imageUri,
+    `documents/${taskId}/${Date.now()}.jpg`,
+    'image/jpeg',
+  );
 }
 
 // ─── Complete task with full POD ──────────────────────────────────

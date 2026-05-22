@@ -104,8 +104,11 @@ export default function ProofOfDeliveryScreen() {
       let proofUrl = '';
       try {
         proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
-      } catch (uploadErr) {
-        console.log('Photo upload failed, continuing without it:', uploadErr);
+        console.log('✅ Photo uploaded:', proofUrl);
+      } catch (uploadErr: any) {
+        const msg = uploadErr?.message || String(uploadErr);
+        console.log('❌ Photo upload failed:', msg);
+        Alert.alert('Upload Error (Photo)', msg);
       }
 
       // 2. Capture and upload signature
@@ -116,8 +119,11 @@ export default function ProofOfDeliveryScreen() {
             format: 'png', quality: 0.9,
           });
           signatureUrl = await uploadSignature(taskId!, signatureUri);
-        } catch (e) {
-          console.log('Signature capture/upload failed, continuing:', e);
+          console.log('✅ Signature uploaded:', signatureUrl);
+        } catch (e: any) {
+          const msg = e?.message || String(e);
+          console.log('❌ Signature upload failed:', msg);
+          Alert.alert('Upload Error (Signature)', msg);
         }
       }
 
@@ -126,8 +132,9 @@ export default function ProofOfDeliveryScreen() {
       if (document) {
         try {
           documentUrl = await uploadDeliveryDocument(taskId!, document);
-        } catch {
-          console.log('Document upload failed, continuing without it');
+          console.log('✅ Document uploaded:', documentUrl);
+        } catch (e: any) {
+          console.log('❌ Document upload failed:', e?.message);
         }
       }
 
