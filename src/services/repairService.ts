@@ -1,9 +1,9 @@
 import {
   collection, addDoc, getDocs, updateDoc, doc, query, where,
 } from 'firebase/firestore';
-import { db, storage } from './firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { RepairRequest, ExpenseStatus } from '../types';
+import { uploadFileToStorage } from './storageUpload';
+import { db } from './firebase';
 
 // ═══════════════════════════════════════════════════════════════════
 // REPAIR REQUESTS
@@ -71,23 +71,12 @@ export async function updateRepairCost(
   });
 }
 
-// ─── Helper: convert local URI to blob (React Native compatible) ──
-async function uriToBlob(uri: string): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.onload = () => resolve(xhr.response as Blob);
-    xhr.onerror = () => reject(new Error('Failed to convert image to blob'));
-    xhr.responseType = 'blob';
-    xhr.open('GET', uri, true);
-    xhr.send(null);
-  });
-}
-
 export async function uploadRepairPhoto(
   requestId: string, imageUri: string
 ): Promise<string> {
-  const blob = await uriToBlob(imageUri);
-  const storageRef = ref(storage, `repairs/${requestId}/${Date.now()}.jpg`);
-  await uploadBytes(storageRef, blob);
-  return getDownloadURL(storageRef);
+  return uploadFileToStorage(
+    imageUri,
+    `repairs/${requestId}/${Date.now()}.jpg`,
+    'image/jpeg',
+  );
 }

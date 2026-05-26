@@ -296,7 +296,7 @@ export default function DriverChatListScreen() {
               onPress={handleNewMessage}
               activeOpacity={0.8}
             >
-              <Text style={styles.nextBtnText}>Start Chat ➡️</Text>
+              <Text style={styles.nextBtnText}>Start Chat </Text>
             </TouchableOpacity>
           </View>
         </View>

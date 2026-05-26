@@ -67,7 +67,7 @@ export default function ApprovalsScreen() {
           onPress: async () => {
             try {
               await setAccountStatus(userProfile.uid, status, user?.uid);
-              Alert.alert('✅ Done', `${userProfile.name} has been ${status}`);
+              Alert.alert('Done', `${userProfile.name} has been ${status}`);
               loadUsers();
             } catch (e: any) {
               Alert.alert('Error', e.message);
@@ -80,8 +80,8 @@ export default function ApprovalsScreen() {
 
   const statusConfig: Record<AccountStatus, { color: string; icon: string }> = {
     pending: { color: COLORS.WARNING, icon: '⏳' },
-    approved: { color: COLORS.SUCCESS, icon: '✅' },
-    rejected: { color: COLORS.DANGER, icon: '❌' },
+    approved: { color: COLORS.SUCCESS, icon: '' },
+    rejected: { color: COLORS.DANGER, icon: '' },
     suspended: { color: COLORS.GRAY_500, icon: '🚫' },
   };
 
@@ -141,7 +141,7 @@ export default function ApprovalsScreen() {
                   </View>
                 </View>
                 <View style={[styles.statusBadge, { backgroundColor: cfg.color + '20' }]}>
-                  <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.icon} {u.status}</Text>
+                  <Text style={[styles.statusText, { color: cfg.color }]}>{cfg.icon ? `${cfg.icon} ` : ''}{u.status}</Text>
                 </View>
               </View>
 
@@ -187,13 +187,13 @@ export default function ApprovalsScreen() {
                     style={[styles.actionBtn, { backgroundColor: COLORS.SUCCESS }]}
                     onPress={() => handleAction(u, 'approved')}
                   >
-                    <Text style={styles.actionBtnText}>✅ Approve</Text>
+                    <Text style={styles.actionBtnText}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: COLORS.DANGER }]}
                     onPress={() => handleAction(u, 'rejected')}
                   >
-                    <Text style={styles.actionBtnText}>❌ Reject</Text>
+                    <Text style={styles.actionBtnText}>Reject</Text>
                   </TouchableOpacity>
                 </View>
               )}
@@ -212,7 +212,7 @@ export default function ApprovalsScreen() {
                   style={[styles.actionBtn, { backgroundColor: COLORS.SUCCESS, marginTop: SPACING.MD }]}
                   onPress={() => handleAction(u, 'approved')}
                 >
-                  <Text style={styles.actionBtnText}>✅ Re-activate</Text>
+                  <Text style={styles.actionBtnText}>Re-activate</Text>
                 </TouchableOpacity>
               )}
             </View>

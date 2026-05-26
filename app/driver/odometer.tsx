@@ -46,6 +46,11 @@ export default function OdometerScreen() {
 
   const handleTakePhoto = async () => {
     try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Required', 'You need to allow camera access to take a photo.');
+        return;
+      }
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true, aspect: [4, 3], quality: 0.7,
       });

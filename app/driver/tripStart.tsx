@@ -49,6 +49,11 @@ export default function TripStartScreen() {
 
   const handleTakePhoto = async () => {
     try {
+      const permissionResult = await ImagePicker.requestCameraPermissionsAsync();
+      if (permissionResult.granted === false) {
+        Alert.alert('Permission Required', 'You need to allow camera access to take a photo.');
+        return;
+      }
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true, aspect: [4, 3], quality: 0.7,
       });
@@ -60,7 +65,7 @@ export default function TripStartScreen() {
 
   const handleStartTrip = async () => {
     if (!odometer || isNaN(Number(odometer))) {
-      Alert.alert('⚠️ Required', 'Please enter your current odometer reading');
+      Alert.alert(' Required', 'Please enter your current odometer reading');
       return;
     }
     if (!photo) {
@@ -74,7 +79,7 @@ export default function TripStartScreen() {
       try {
         const position = await getCurrentLocation();
         loc = { lat: position.coords.latitude, lng: position.coords.longitude };
-      } catch {}
+      } catch { }
 
       // Use first task's pickup/delivery as start/end
       const firstTask = acceptedTasks[0];
@@ -101,15 +106,15 @@ export default function TripStartScreen() {
       });
 
       if (photo) {
-        try { await uploadOdometerPhoto(readingId, photo); } catch {}
+        try { await uploadOdometerPhoto(readingId, photo); } catch { }
       }
 
       try {
         const linkedIds = await linkAcceptedTasksToTrip(user!.uid, tripId);
         setLinkedTaskCount(linkedIds.length);
-      } catch {}
+      } catch { }
 
-      try { await startTrackingDriverLocation(user!.uid); } catch {}
+      try { await startTrackingDriverLocation(user!.uid); } catch { }
 
       setShowSuccessModal(true);
     } catch (e: any) {
@@ -138,7 +143,7 @@ export default function TripStartScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-          
+
           {/* Top Info Card */}
           <View style={styles.topInfoCard}>
             <View style={styles.locationPinIcon}>
@@ -276,7 +281,7 @@ export default function TripStartScreen() {
           )}
 
           <View style={{ height: 24 }} />
-          
+
           {/* Start Trip Button */}
           <TouchableOpacity
             style={[
@@ -295,7 +300,7 @@ export default function TripStartScreen() {
               </View>
             )}
           </TouchableOpacity>
-          
+
           <View style={{ height: 40 }} />
 
         </ScrollView>
@@ -309,22 +314,22 @@ export default function TripStartScreen() {
               <Text style={styles.modalTitle}>🚚 Trip Started!</Text>
             </View>
             <View style={styles.modalBody}>
-               <Text style={styles.modalText}>Odometer: <Text style={{fontWeight:'700'}}>{odometer} km</Text></Text>
-               {acceptedTasks[0] && (
-                 <>
-                   <Text style={styles.modalText}>From: <Text style={{fontWeight:'700'}}>{acceptedTasks[0].pickupLocation}</Text></Text>
-                   <Text style={styles.modalText}>To: <Text style={{fontWeight:'700'}}>{acceptedTasks[0].deliveryLocation}</Text></Text>
-                 </>
-               )}
-               {linkedTaskCount > 0 && (
-                 <Text style={styles.modalText}>📦 <Text style={{fontWeight:'700'}}>{linkedTaskCount} task{linkedTaskCount > 1 ? 's' : ''}</Text> linked</Text>
-               )}
-               {photo && <Text style={styles.modalText}>📷 Odometer photo captured</Text>}
-               <Text style={styles.modalText}>GPS tracking is now active.</Text>
+              <Text style={styles.modalText}>Odometer: <Text style={{ fontWeight: '700' }}>{odometer} km</Text></Text>
+              {acceptedTasks[0] && (
+                <>
+                  <Text style={styles.modalText}>From: <Text style={{ fontWeight: '700' }}>{acceptedTasks[0].pickupLocation}</Text></Text>
+                  <Text style={styles.modalText}>To: <Text style={{ fontWeight: '700' }}>{acceptedTasks[0].deliveryLocation}</Text></Text>
+                </>
+              )}
+              {linkedTaskCount > 0 && (
+                <Text style={styles.modalText}>📦 <Text style={{ fontWeight: '700' }}>{linkedTaskCount} task{linkedTaskCount > 1 ? 's' : ''}</Text> linked</Text>
+              )}
+              {photo && <Text style={styles.modalText}>📷 Odometer photo captured</Text>}
+              <Text style={styles.modalText}>GPS tracking is now active.</Text>
             </View>
             <View style={styles.modalFooter}>
-              <TouchableOpacity 
-                style={styles.modalConfirmBtn} 
+              <TouchableOpacity
+                style={styles.modalConfirmBtn}
                 onPress={() => { setShowSuccessModal(false); router.replace('/driver/dashboard'); }}
               >
                 <Text style={styles.modalConfirmText}>OK</Text>
@@ -355,7 +360,7 @@ const styles = StyleSheet.create({
   headerIcon: { width: 32, height: 32, marginRight: SPACING.SM, resizeMode: 'contain' },
   title: { fontSize: FONT_SIZES.XL, fontWeight: '800', color: '#5D1115' },
   content: { flex: 1, paddingHorizontal: SPACING.LG, paddingTop: SPACING.MD },
-  
+
   // Top info card
   topInfoCard: {
     backgroundColor: '#72252A',

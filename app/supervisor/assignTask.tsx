@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, Alert, ActivityIndicator, Image
+  ScrollView, ActivityIndicator, Image, Modal
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
@@ -10,6 +10,7 @@ import { createTask, getTaskById, updateTask, assignTaskToDriver, getAllTasks } 
 import { getDriversTripStatus } from '../../src/services/tripService';
 import { TaskPriority, Driver } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
+import { Ionicons } from '@expo/vector-icons';
 
 const PACKAGE_TYPES = ['Dry Groceries', 'Frozen Foods', 'Fresh Produce', 'Beverages', 'Electronics'];
 
@@ -46,6 +47,28 @@ export default function AssignTaskScreen() {
   const [driverTaskStatus, setDriverTaskStatus] = useState<Record<string, string>>({});
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const [middleLocations, setMiddleLocations] = useState<string[]>([]);
+
+  // Custom Modal State
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalType, setModalType] = useState<'success' | 'error'>('success');
+  const [modalTitle, setModalTitle] = useState('');
+  const [modalMessage, setModalMessage] = useState('');
+  const [onModalClose, setOnModalClose] = useState<(() => void) | null>(null);
+
+  const showModal = (type: 'success' | 'error', title: string, message: string, onClose?: () => void) => {
+    setModalType(type);
+    setModalTitle(title);
+    setModalMessage(message);
+    setOnModalClose(() => onClose || null);
+    setModalVisible(true);
+  };
+
+  const closeModal = () => {
+    setModalVisible(false);
+    if (onModalClose) {
+      onModalClose();
+    }
+  };
 
   // Load existing task for editing
   useEffect(() => {
@@ -92,7 +115,7 @@ export default function AssignTaskScreen() {
 
   const handleSubmit = async () => {
     if (!pickupLocation || !deliveryLocation || !recipientName || !recipientPhone || !selectedDriverId) {
-      Alert.alert('Error', 'Please fill in all required fields and select a driver.');
+      showModal('error', 'Missing Information', 'Please fill in all required fields and select a driver.');
       return;
     }
 
@@ -113,9 +136,9 @@ export default function AssignTaskScreen() {
 
         await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName);
 
-        Alert.alert('✅ Updated', 'Task updated successfully', [
-          { text: 'OK', onPress: () => router.back() },
-        ]);
+        showModal('success', 'Task Updated', 'Task updated successfully', () => {
+          router.back();
+        });
       } else {
         const newTaskId = await createTask({
           pickupLocation,
@@ -133,12 +156,12 @@ export default function AssignTaskScreen() {
           middleLocations,
         });
 
-        Alert.alert('✅ Created', `Task created successfully${selectedDriverId ? ' and assigned to driver' : ''}`, [
-          { text: 'OK', onPress: () => router.replace('/supervisor/dashboard') },
-        ]);
+        showModal('success', 'Task Created', `Task created successfully${selectedDriverId ? ' and assigned to driver' : ''}`, () => {
+          router.replace('/supervisor/dashboard');
+        });
       }
     } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to save task');
+      showModal('error', 'Operation Failed', e.message || 'Failed to save task');
     } finally {
       setLoading(false);
     }
@@ -228,19 +251,19 @@ export default function AssignTaskScreen() {
               style={[styles.submitBtn, !selectedDriverId && { backgroundColor: COLORS.GRAY_400 }]}
               onPress={() => {
                 if (!selectedDriverId) {
-                  Alert.alert('Required', 'Please select a driver to continue.');
+                  showModal('error', 'Required Field', 'Please select a driver to continue.');
                   return;
                 }
                 setCurrentStep(2);
               }}
               activeOpacity={0.8}
             >
-              <Text style={styles.submitText}>Next ➡️</Text>
+              <Text style={styles.submitText}>Next</Text>
             </TouchableOpacity>
           </>
         ) : (
           <>
-            <SectionCard title="Task Priority" icon="⚡">
+            <SectionCard title="Task Priority">
               <View style={styles.priorityRow}>
                 {(['LOW', 'MEDIUM', 'HIGH'] as TaskPriority[]).map(p => (
                   <TouchableOpacity
@@ -254,14 +277,14 @@ export default function AssignTaskScreen() {
                     onPress={() => setPriority(p)}
                   >
                     <Text style={[styles.priorityText, priority === p && { color: COLORS.WHITE }]}>
-                      {p === 'HIGH' ? '🔴' : p === 'MEDIUM' ? '🟡' : '🟢'} {p}
+                      {p}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
             </SectionCard>
 
-            <SectionCard title="Route Details" icon="📍">
+            <SectionCard title="Route Details">
               <View style={styles.routeContainer}>
                 <View style={styles.routeLineContainer}>
                   <View style={styles.routeDotPickup} />
@@ -331,7 +354,7 @@ export default function AssignTaskScreen() {
               </View>
             </SectionCard>
 
-            <SectionCard title="Package Details" icon="📦">
+            <SectionCard title="Package Details">
               <Text style={styles.label}>Package Items & Description</Text>
               <View style={styles.packageSuggestions}>
                 {PACKAGE_TYPES.map(type => (
@@ -423,7 +446,7 @@ export default function AssignTaskScreen() {
                   <ActivityIndicator color={COLORS.WHITE} />
                 ) : (
                   <Text style={styles.submitText}>
-                    {isEditing ? '💾 Save Changes' : '✅ Create Task'}
+                    {isEditing ? 'Save Changes' : 'Create Task'}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -433,6 +456,45 @@ export default function AssignTaskScreen() {
 
         <View style={{ height: SPACING.XXXL }} />
       </ScrollView>
+
+      {/* Custom Modal */}
+      <Modal
+        visible={modalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closeModal}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={[
+              styles.iconCircle, 
+              { backgroundColor: modalType === 'success' ? '#E8F5E9' : '#FFEBEE' }
+            ]}>
+              <Ionicons 
+                name={modalType === 'success' ? 'checkmark-circle' : 'close-circle'} 
+                size={48} 
+                color={modalType === 'success' ? '#4CAF50' : '#F44336'} 
+              />
+            </View>
+            
+            <Text style={styles.modalTitle}>{modalTitle}</Text>
+            <Text style={styles.modalMessage}>{modalMessage}</Text>
+            
+            <TouchableOpacity 
+              style={[
+                styles.modalButton, 
+                { backgroundColor: modalType === 'success' ? COLORS.PRIMARY : '#F44336' }
+              ]} 
+              onPress={closeModal}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalButtonText}>
+                {modalType === 'success' ? 'Continue' : 'Try Again'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -609,4 +671,55 @@ const styles = StyleSheet.create({
     ...SHADOWS.MD,
   },
   submitText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+  
+  // Custom Modal Styles
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: SPACING.XL,
+  },
+  modalContent: {
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    padding: SPACING.XL,
+    width: '100%',
+    maxWidth: 340,
+    alignItems: 'center',
+    ...SHADOWS.LG,
+  },
+  iconCircle: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: SPACING.LG,
+  },
+  modalTitle: {
+    fontSize: FONT_SIZES.XL,
+    fontWeight: '800',
+    color: COLORS.GRAY_900,
+    marginBottom: SPACING.SM,
+    textAlign: 'center',
+  },
+  modalMessage: {
+    fontSize: FONT_SIZES.MD,
+    color: COLORS.GRAY_600,
+    textAlign: 'center',
+    marginBottom: SPACING.XL,
+    lineHeight: 22,
+  },
+  modalButton: {
+    width: '100%',
+    paddingVertical: SPACING.MD + 4,
+    borderRadius: RADIUS.LG,
+    alignItems: 'center',
+  },
+  modalButtonText: {
+    color: COLORS.WHITE,
+    fontSize: FONT_SIZES.LG,
+    fontWeight: '700',
+  },
 });

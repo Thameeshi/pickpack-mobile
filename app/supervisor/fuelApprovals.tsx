@@ -28,7 +28,7 @@ export default function FuelApprovalsScreen() {
   const handleApproval = async (id: string, status: 'approved' | 'rejected') => {
     try {
       await updateFuelExpenseStatus(id, status, user?.uid);
-      Alert.alert('✅ Done', `Expense ${status}`);
+      Alert.alert('Done', `Expense ${status}`);
       loadExpenses();
     } catch (e: any) {
       Alert.alert('Error', e.message);
@@ -80,20 +80,20 @@ export default function FuelApprovalsScreen() {
                     style={[styles.actionBtn, { backgroundColor: COLORS.SUCCESS }]}
                     onPress={() => handleApproval(item.id!, 'approved')}
                   >
-                    <Text style={styles.actionText}>✅ Approve</Text>
+                    <Text style={styles.actionText}>Approve</Text>
                   </TouchableOpacity>
                   <TouchableOpacity
                     style={[styles.actionBtn, { backgroundColor: COLORS.DANGER }]}
                     onPress={() => handleApproval(item.id!, 'rejected')}
                   >
-                    <Text style={styles.actionText}>❌ Reject</Text>
+                    <Text style={styles.actionText}>Reject</Text>
                   </TouchableOpacity>
                 </View>
               )}
               {item.status !== 'pending' && (
                 <View style={[styles.statusTag, { backgroundColor: item.status === 'approved' ? COLORS.SUCCESS + '20' : COLORS.DANGER + '20' }]}>
                   <Text style={{ color: item.status === 'approved' ? COLORS.SUCCESS : COLORS.DANGER, fontWeight: '600', fontSize: FONT_SIZES.SM }}>
-                    {item.status === 'approved' ? '✅ Approved' : '❌ Rejected'}
+                    {item.status === 'approved' ? 'Approved' : 'Rejected'}
                   </Text>
                 </View>
               )}
