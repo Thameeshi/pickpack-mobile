@@ -44,3 +44,4 @@ yarn-error.*
 
 # web dashboard (separate repo)
 /web-dashboard
+serviceAccountKey.json
