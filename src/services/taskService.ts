@@ -1,20 +1,79 @@
 import {
-  collection, addDoc, getDoc, getDocs, updateDoc, deleteDoc,
+  collection, addDoc, getDoc, getDocs, updateDoc, setDoc, deleteDoc,
   doc, query, where,
 } from 'firebase/firestore';
-import { Task, TaskCreatePayload, TaskStatus } from '../types';
+import { InvoiceRecord, Task, TaskCreatePayload, TaskStatus } from '../types';
 import { notifyTaskAssigned } from './notificationService';
 import { isDriverOnTrip } from './tripService';
 import { uploadFileToStorage } from './storageUpload';
 import { db } from './firebase';
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_BASE_FEE = 1000;
+const DEFAULT_TAX_RATE = 0;
 
 // ─── Generate unique QR code for a task ────────────────────────────
 function generateQRCode(taskId: string): string {
   const short = taskId.slice(0, 8).toUpperCase();
   const ts = Date.now().toString(36).toUpperCase();
   return `PPCK-${short}-${ts}`;
+}
+
+function buildTaskInvoice(task: Task, driverId: string, driverName: string, supervisorId: string, supervisorName?: string): Omit<InvoiceRecord, 'id'> {
+  const priorityMultiplier = task.priority === 'HIGH' ? 1.5 : task.priority === 'MEDIUM' ? 1.2 : 1;
+  const quantity = 1;
+  const unitPrice = Math.round(DEFAULT_BASE_FEE * priorityMultiplier + (task.itemCount || 0) * 100);
+  const amount = quantity * unitPrice;
+  const subtotal = amount;
+  const taxAmount = Math.round(subtotal * DEFAULT_TAX_RATE);
+  const total = subtotal + taxAmount;
+
+  return {
+    taskId: task.id || '',
+    tripId: task.tripId,
+    driverId,
+    driverName,
+    supervisorId,
+    supervisorName: supervisorName || task.supervisorName || '',
+    recipientName: task.recipientName,
+    recipientPhone: task.recipientPhone,
+    routeLabel: `${task.pickupLocation} → ${task.deliveryLocation}`,
+    items: [
+      {
+        description: `Delivery fee for ${task.recipientName}`,
+        quantity,
+        unitPrice,
+        amount,
+      },
+    ],
+    subtotal,
+    taxRate: DEFAULT_TAX_RATE,
+    taxAmount,
+    total,
+    status: 'draft',
+    dueAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+    generatedBy: supervisorId,
+    generatedByRole: 'supervisor',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+async function createInvoiceForTask(task: Task, driverId: string, driverName: string, supervisorId: string, supervisorName?: string): Promise<string | null> {
+  if (!task.id) return null;
+
+  const invoiceRef = doc(db, 'invoices', task.id);
+  const invoice = buildTaskInvoice(task, driverId, driverName, supervisorId, supervisorName);
+  const invoiceSnap = await getDoc(invoiceRef);
+  if (invoiceSnap.exists()) {
+    await updateDoc(invoiceRef, { ...invoice, updatedAt: Date.now() });
+    await updateDoc(doc(db, 'tasks', task.id), { invoiceId: invoiceRef.id, updatedAt: Date.now() });
+    return invoiceRef.id;
+  }
+
+  await setDoc(invoiceRef, invoice);
+  await updateDoc(doc(db, 'tasks', task.id), { invoiceId: invoiceRef.id, updatedAt: Date.now() });
+  return invoiceRef.id;
 }
 
 // ─── Create a new task ─────────────────────────────────────────────
@@ -38,6 +97,15 @@ export async function createTask(payload: TaskCreatePayload): Promise<string> {
   // Now set the QR code with the real doc ID
   const qrCode = generateQRCode(docRef.id);
   await updateDoc(doc(db, 'tasks', docRef.id), { qrCode });
+
+  if (payload.assignedDriverId) {
+    try {
+      const taskWithId: Task = { ...taskData, id: docRef.id } as Task;
+      await createInvoiceForTask(taskWithId, payload.assignedDriverId, payload.assignedDriverName || '', payload.supervisorId, payload.supervisorName);
+    } catch (error) {
+      console.log('Failed to create invoice for task:', error);
+    }
+  }
 
   // Send notification to assigned driver
   if (payload.assignedDriverId) {
@@ -112,8 +180,11 @@ export async function updateTask(taskId: string, updates: Partial<Task>): Promis
 
 // ─── Assign task to driver (with notification) ────────────────────
 export async function assignTaskToDriver(
-  taskId: string, driverId: string, driverName?: string,
-  supervisorId?: string, supervisorName?: string,
+  taskId: string,
+  driverId: string,
+  driverName?: string,
+  supervisorId?: string,
+  supervisorName?: string,
 ): Promise<void> {
   const now = Date.now();
   const task = await getTaskById(taskId);
@@ -140,6 +211,20 @@ export async function assignTaskToDriver(
   }
 
   await updateDoc(doc(db, 'tasks', taskId), updates);
+
+  try {
+    if (task) {
+      await createInvoiceForTask(
+        task,
+        driverId,
+        driverName || task.assignedDriverName || '',
+        supervisorId || task.supervisorId || '',
+        supervisorName || task.supervisorName,
+      );
+    }
+  } catch (error) {
+    console.log('Failed to create invoice during assignment:', error);
+  }
 
   // Send notification
   try {

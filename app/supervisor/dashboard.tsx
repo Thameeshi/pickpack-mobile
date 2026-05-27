@@ -8,11 +8,19 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useNotifications } from '../../src/hooks/useNotifications';
 import { getAllTasks } from '../../src/services/taskService';
 import { subscribeToTrips } from '../../src/services/tripService';
+import { getAllRepairRequests } from '../../src/services/repairService';
 import { TripSession } from '../../src/types';
 import { Task } from '../../src/types';
+import { RepairRequest } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 const { width } = Dimensions.get('window');
+const DAY_START = (() => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date.getTime();
+})();
+const ON_TIME_WINDOW_MS = 6 * 60 * 60 * 1000;
 
 export default function SupervisorDashboardScreen() {
   const router = useRouter();
@@ -20,15 +28,18 @@ export default function SupervisorDashboardScreen() {
   const { unreadCount } = useNotifications(user?.uid || '');
   const [allTasks, setAllTasks] = useState<Task[]>([]);
   const [trips, setTrips] = useState<TripSession[]>([]);
+  const [repairs, setRepairs] = useState<RepairRequest[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const flatListRef = useRef<FlatList<TripSession>>(null);
+  const flatListRef = useRef<FlatList<TripSession | Task>>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const loadTasks = async () => {
     try {
       const data = await getAllTasks();
       setAllTasks(data);
+      const repairData = await getAllRepairRequests();
+      setRepairs(repairData);
     } catch (e) {
       console.log('Tasks load error:', e);
     } finally {
@@ -52,6 +63,36 @@ export default function SupervisorDashboardScreen() {
 
   const ongoingTasks = allTasks.filter(t => t.status === 'in_progress' || t.status === 'arrived');
   const activeTripSessions = trips.filter(tr => tr.status === 'active');
+  const todaysScheduledDeliveries = allTasks.filter(t => (t.createdAt || 0) >= DAY_START && !['delivered', 'failed'].includes(t.status));
+  const deliveredTasks = allTasks.filter(t => t.status === 'delivered');
+  const onTimeDeliveries = deliveredTasks.filter(t => {
+    const startedAt = t.assignedAt || t.createdAt;
+    const finishedAt = t.completedAt || t.updatedAt;
+    return finishedAt - startedAt <= ON_TIME_WINDOW_MS;
+  }).length;
+  const completionRate = allTasks.length ? deliveredTasks.length / allTasks.length : 0;
+  const onTimeRate = deliveredTasks.length ? onTimeDeliveries / deliveredTasks.length : 0;
+  const pendingRepairs = repairs.filter(r => r.status === 'pending');
+  const issueCount = allTasks.filter(t => t.status === 'failed').length + pendingRepairs.length;
+  const routeStatusCounts = ['pending', 'assigned', 'accepted', 'in_progress', 'arrived', 'delivered', 'failed'] as const;
+  const driverLoads = Object.values(allTasks.reduce((acc, task) => {
+    const key = task.assignedDriverId || task.assignedDriverName || 'unassigned';
+    if (!acc[key]) {
+      acc[key] = { id: key, name: task.assignedDriverName || 'Unassigned', assigned: 0, completed: 0, onTime: 0 };
+    }
+    acc[key].assigned += 1;
+    if (task.status === 'delivered') {
+      acc[key].completed += 1;
+      const startedAt = task.assignedAt || task.createdAt;
+      const finishedAt = task.completedAt || task.updatedAt;
+      if (finishedAt - startedAt <= ON_TIME_WINDOW_MS) acc[key].onTime += 1;
+    }
+    return acc;
+  }, {} as Record<string, { id: string; name: string; assigned: number; completed: number; onTime: number }>)).sort((a, b) => b.assigned - a.assigned);
+  const completedTrips = trips.filter(tr => tr.status === 'completed');
+  const fuelEfficiencyPerRoute = completedTrips.length
+    ? completedTrips.reduce((sum, trip) => sum + (trip.totalFuelLitres || 0), 0) / completedTrips.length
+    : 0;
   const cardWidth = width * 0.84;
   const itemWidth = cardWidth + SPACING.MD;
 
@@ -176,7 +217,7 @@ export default function SupervisorDashboardScreen() {
             <ActivityIndicator size="large" color={COLORS.PRIMARY} style={{ marginVertical: SPACING.XL }} />
           ) : activeTripSessions.length > 0 ? (
             <View>
-              <FlatList
+              <FlatList<TripSession | Task>
                 ref={flatListRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -215,7 +256,7 @@ export default function SupervisorDashboardScreen() {
             </View>
           ) : ongoingTasks.length > 0 ? (
             <View>
-              <FlatList
+              <FlatList<TripSession | Task>
                 ref={flatListRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
@@ -252,6 +293,22 @@ export default function SupervisorDashboardScreen() {
               <Text style={styles.gridLabel}>{action.label}</Text>
             </TouchableOpacity>
           ))}
+        </View>
+
+        <View style={styles.operationsSection}>
+          <View style={styles.overviewCard}>
+            <TouchableOpacity
+              activeOpacity={0.8}
+              onPress={() => router.push('/supervisor/operationsOverview')}
+              style={styles.overviewHeader}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={styles.overviewTitle}>Overview</Text>
+                <Text style={styles.overviewSubtitle}>Daily operations dashboard</Text>
+              </View>
+              <Text style={styles.overviewChevron}>{'›'}</Text>
+            </TouchableOpacity>
+          </View>
         </View>
       </ScrollView>
     </View>
@@ -329,6 +386,137 @@ const styles = StyleSheet.create({
   },
   emptyIcon: { fontSize: 40, marginBottom: SPACING.SM },
   emptyText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500 },
+
+  operationsSection: {
+    marginTop: SPACING.LG,
+    marginBottom: SPACING.XL,
+  },
+  overviewCard: {
+    marginHorizontal: SPACING.XL,
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 16,
+    elevation: 2,
+    overflow: 'hidden',
+  },
+  overviewHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.LG,
+    paddingVertical: SPACING.LG,
+  },
+  overviewTitle: {
+    fontSize: FONT_SIZES.LG,
+    fontWeight: '900',
+    color: COLORS.GRAY_900,
+  },
+  overviewSubtitle: {
+    marginTop: 4,
+    fontSize: FONT_SIZES.XS,
+    color: COLORS.GRAY_500,
+    fontWeight: '500',
+  },
+  overviewChevron: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.GRAY_100,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    lineHeight: 34,
+    fontSize: 20,
+    fontWeight: '900',
+    color: COLORS.GRAY_800,
+  },
+  opsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: SPACING.MD,
+    paddingHorizontal: SPACING.LG,
+    marginTop: SPACING.SM,
+  },
+  opsCard: {
+    width: (width - SPACING.XL * 2 - SPACING.MD) / 2,
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    padding: SPACING.MD,
+    borderWidth: 1,
+    borderColor: '#E6F5EA',
+    ...SHADOWS.SM,
+  },
+  opsValue: {
+    fontSize: FONT_SIZES.XXL,
+    fontWeight: '800',
+    color: COLORS.GRAY_900,
+  },
+  opsLabel: {
+    marginTop: 4,
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '700',
+    color: COLORS.GRAY_800,
+  },
+  opsMeta: {
+    marginTop: 4,
+    fontSize: FONT_SIZES.XS,
+    color: COLORS.GRAY_500,
+  },
+  opsPanel: {
+    marginTop: SPACING.MD,
+    marginHorizontal: SPACING.LG,
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    padding: SPACING.MD,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_100,
+    ...SHADOWS.SM,
+  },
+  opsPanelTitle: {
+    fontSize: FONT_SIZES.MD,
+    fontWeight: '800',
+    color: COLORS.GRAY_900,
+    marginBottom: SPACING.SM,
+  },
+  routeRowMetric: {
+    marginBottom: SPACING.SM,
+  },
+  routeRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  routeLabel: {
+    fontSize: FONT_SIZES.SM,
+    color: COLORS.GRAY_800,
+    fontWeight: '600',
+    textTransform: 'capitalize',
+    flex: 1,
+    paddingRight: SPACING.SM,
+  },
+  routeCount: {
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '700',
+    color: COLORS.GRAY_700,
+  },
+  routeBarTrack: {
+    height: 8,
+    backgroundColor: COLORS.GRAY_100,
+    borderRadius: 999,
+    overflow: 'hidden',
+  },
+  routeBarFill: {
+    height: '100%',
+    borderRadius: 999,
+  },
+  allocationItem: {
+    marginBottom: SPACING.SM,
+  },
 
   carouselControls: {
     flexDirection: 'row',

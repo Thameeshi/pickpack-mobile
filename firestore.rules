@@ -184,6 +184,34 @@ service cloud.firestore {
                     || isSuperAdmin();
     }
 
+    // ─── Invoices ────────────────────────────────────────────────
+    match /invoices/{invoiceId} {
+      // Supervisors and superadmins can read all invoices they manage.
+      // Drivers can read their own invoice records.
+      allow read: if isSuperAdmin()
+                  || (isSupervisor() && resource.data.supervisorId == request.auth.uid)
+                  || (isDriver() && resource.data.driverId == request.auth.uid);
+
+      // Supervisors can create draft invoices for their own tasks.
+      // Superadmins can create invoices for any task.
+      allow create: if isSuperAdmin()
+                    || (isSupervisor()
+                        && request.resource.data.supervisorId == request.auth.uid
+                        && request.resource.data.status == 'draft'
+                        && request.resource.data.driverId is string
+                        && request.resource.data.taskId is string);
+
+      // Supervisors can issue their own invoices.
+      // Superadmins can update any invoice status.
+      allow update: if isSuperAdmin()
+                    || (isSupervisor()
+                        && resource.data.supervisorId == request.auth.uid
+                        && request.resource.data.supervisorId == resource.data.supervisorId
+                        && request.resource.data.driverId == resource.data.driverId);
+
+      allow delete: if isSuperAdmin();
+    }
+
     // ─── Reports ──────────────────────────────────────────────────
     match /reports/{reportId} {
       allow read: if isSupervisor();

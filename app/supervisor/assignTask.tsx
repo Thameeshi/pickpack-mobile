@@ -134,7 +134,7 @@ export default function AssignTaskScreen() {
           middleLocations,
         });
 
-        await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName);
+        await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName, user?.uid, profile?.name || 'Supervisor');
 
         showModal('success', 'Task Updated', 'Task updated successfully', () => {
           router.back();
