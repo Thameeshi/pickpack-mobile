@@ -34,7 +34,8 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       // Users can create their own profile during registration
-      allow create: if isOwner(userId);
+      // Superadmins can create supervisor profiles
+      allow create: if isOwner(userId) || (isSuperAdmin() && request.resource.data.role == 'supervisor');
 
       // Users can update their own profile (except role and status)
       // Supervisors can update status (approve drivers)

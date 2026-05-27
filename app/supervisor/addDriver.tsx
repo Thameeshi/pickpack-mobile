@@ -13,8 +13,11 @@ export default function AddDriverScreen() {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [phone, setPhone] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [phone, setPhone] = useState('+94 ');
   const [vehiclePlate, setVehiclePlate] = useState('');
+  const [showOptional, setShowOptional] = useState(false);
+  const [errors, setErrors] = useState<{ [k: string]: string }>({});
   const [loading, setLoading] = useState(false);
 
   // Custom Modal State
@@ -38,8 +41,15 @@ export default function AddDriverScreen() {
   };
 
   const handleAddDriver = async () => {
-    if (!name || !email || !password || !phone) {
-      showModal('error', 'Missing Information', 'Please fill in all required fields.');
+    const newErrors: { [k: string]: string } = {};
+    if (!name.trim()) newErrors.name = 'Full name is required.';
+    if (!email.trim()) newErrors.email = 'Email is required.';
+    if (!password || password.length < 6) newErrors.password = 'Password must be at least 6 characters.';
+    if (!phone.trim() || phone.trim().length < 6) newErrors.phone = 'Please enter a valid phone number.';
+
+    if (Object.keys(newErrors).length) {
+      setErrors(newErrors);
+      showModal('error', 'Missing Information', Object.values(newErrors)[0]);
       return;
     }
 
@@ -54,6 +64,7 @@ export default function AddDriverScreen() {
         'Driver Added Successfully',
         'The driver account has been created. They are currently pending approval from the Super Admin.'
       );
+      setName(''); setEmail(''); setPassword(''); setPhone('+94 '); setVehiclePlate(''); setShowOptional(false); setErrors({});
     } catch (e: any) {
       showModal('error', 'Registration Failed', e.message || 'Failed to add driver');
     } finally {
@@ -103,14 +114,25 @@ export default function AddDriverScreen() {
 
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Password *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Min 6 characters"
-              placeholderTextColor={COLORS.GRAY_400}
-              secureTextEntry
-              value={password}
-              onChangeText={setPassword}
-            />
+            <View style={styles.inputRow}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder="Min 6 characters"
+                placeholderTextColor={COLORS.GRAY_400}
+                secureTextEntry={!showPassword}
+                value={password}
+                onChangeText={(t) => { setPassword(t); setErrors(prev => ({ ...prev, password: '' })); }}
+                autoCapitalize="none"
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.iconBtn}
+                accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+              >
+                <Ionicons name={showPassword ? 'eye-off' : 'eye'} size={20} color={COLORS.GRAY_500} />
+              </TouchableOpacity>
+            </View>
+            {errors.password ? <Text style={styles.errorText}>{errors.password}</Text> : null}
           </View>
 
           <View style={styles.inputGroup}>
@@ -121,19 +143,36 @@ export default function AddDriverScreen() {
               placeholderTextColor={COLORS.GRAY_400}
               keyboardType="phone-pad"
               value={phone}
-              onChangeText={setPhone}
+              onChangeText={(t) => {
+                let next = t;
+                if (!next.startsWith('+') && next !== '') next = '+' + next;
+                setPhone(next);
+                setErrors(prev => ({ ...prev, phone: '' }));
+              }}
             />
+            {errors.phone ? <Text style={styles.errorText}>{errors.phone}</Text> : null}
           </View>
 
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Vehicle Plate (Optional)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g. WP ABC 1234"
-              placeholderTextColor={COLORS.GRAY_400}
-              value={vehiclePlate}
-              onChangeText={setVehiclePlate}
-            />
+            {!showOptional ? (
+              <TouchableOpacity onPress={() => setShowOptional(true)} activeOpacity={0.7}>
+                <Text style={styles.optionalToggle}>+ Add vehicle plate (optional)</Text>
+              </TouchableOpacity>
+            ) : (
+              <View>
+                <Text style={styles.label}>Vehicle Plate (Optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g. WP ABC 1234"
+                  placeholderTextColor={COLORS.GRAY_400}
+                  value={vehiclePlate}
+                  onChangeText={setVehiclePlate}
+                />
+                <TouchableOpacity onPress={() => { setVehiclePlate(''); setShowOptional(false); }} style={styles.removeOptional}>
+                  <Text style={styles.removeOptionalText}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
 
           <TouchableOpacity
@@ -278,4 +317,10 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.LG,
     fontWeight: '700',
   },
+  inputRow: { flexDirection: 'row', alignItems: 'center' },
+  iconBtn: { padding: SPACING.SM, marginLeft: SPACING.SM },
+  errorText: { color: '#D32F2F', marginTop: SPACING.XS, fontSize: FONT_SIZES.SM },
+  optionalToggle: { color: COLORS.PRIMARY, fontWeight: '700', fontSize: FONT_SIZES.MD },
+  removeOptional: { marginTop: SPACING.SM, alignSelf: 'flex-end' },
+  removeOptionalText: { color: COLORS.GRAY_500, fontWeight: '600' },
 });
