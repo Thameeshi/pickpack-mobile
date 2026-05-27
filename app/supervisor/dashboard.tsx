@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react';
+import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
   ActivityIndicator, RefreshControl, ScrollView, Dimensions, Image
@@ -7,6 +7,8 @@ import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useNotifications } from '../../src/hooks/useNotifications';
 import { getAllTasks } from '../../src/services/taskService';
+import { subscribeToTrips } from '../../src/services/tripService';
+import { TripSession } from '../../src/types';
 import { Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
@@ -17,9 +19,10 @@ export default function SupervisorDashboardScreen() {
   const { user, profile } = useAuth();
   const { unreadCount } = useNotifications(user?.uid || '');
   const [allTasks, setAllTasks] = useState<Task[]>([]);
+  const [trips, setTrips] = useState<TripSession[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const flatListRef = useRef<FlatList>(null);
+  const flatListRef = useRef<FlatList<TripSession>>(null);
   const [currentIndex, setCurrentIndex] = useState(0);
 
   const loadTasks = async () => {
@@ -35,10 +38,22 @@ export default function SupervisorDashboardScreen() {
 
   useFocusEffect(useCallback(() => { loadTasks(); }, []));
 
+  useEffect(() => {
+    const unsub = subscribeToTrips(setTrips);
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    setCurrentIndex(0);
+    flatListRef.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [trips]);
+
   const handleRefresh = async () => { setRefreshing(true); await loadTasks(); setRefreshing(false); };
 
-  const ongoingTrips = allTasks.filter(t => t.status === 'in_progress' || t.status === 'arrived');
-  const itemWidth = width * 0.85 + SPACING.MD;
+  const ongoingTasks = allTasks.filter(t => t.status === 'in_progress' || t.status === 'arrived');
+  const activeTripSessions = trips.filter(tr => tr.status === 'active');
+  const cardWidth = width * 0.84;
+  const itemWidth = cardWidth + SPACING.MD;
 
   const shiftLeft = () => {
     if (currentIndex > 0) {
@@ -49,7 +64,7 @@ export default function SupervisorDashboardScreen() {
   };
 
   const shiftRight = () => {
-    if (currentIndex < ongoingTrips.length - 1) {
+    if (currentIndex < activeTripSessions.length - 1) {
       const next = currentIndex + 1;
       flatListRef.current?.scrollToOffset({ offset: next * itemWidth, animated: true });
       setCurrentIndex(next);
@@ -59,7 +74,55 @@ export default function SupervisorDashboardScreen() {
   const onMomentumScrollEnd = (e: any) => {
     const contentOffsetX = e.nativeEvent.contentOffset.x;
     const index = Math.round(contentOffsetX / itemWidth);
-    setCurrentIndex(index);
+    setCurrentIndex(Math.max(0, Math.min(index, Math.max(0, activeTripSessions.length - 1))));
+  };
+
+  const renderTripCard = (t: TripSession | Task, isSessionTrip = false) => {
+    const tripStatus = isSessionTrip ? 'active' : (t as Task).status;
+
+    return (
+      <TouchableOpacity
+        style={[styles.tripCard, { width: cardWidth }]}
+        activeOpacity={0.85}
+        onPress={() => router.push('/supervisor/driverTracking')}
+      >
+        <View style={styles.tripCardHeader}>
+          <View style={[styles.statusBadge, { backgroundColor: COLORS.SECONDARY + '20' }]}>
+            <Text style={[styles.statusText, { color: COLORS.SECONDARY }]}>🚚 Active Trip</Text>
+          </View>
+          <Text style={styles.activeDriver}>{isSessionTrip ? (t as TripSession).driverName || 'Driver' : (t as Task).assignedDriverName || 'Driver'}</Text>
+        </View>
+
+        <View style={styles.tripRoute}>
+          <View style={styles.routeRow}>
+            <View style={[styles.routeDot, { backgroundColor: COLORS.PRIMARY }]} />
+            <Text style={styles.routeText} numberOfLines={1}>
+              {isSessionTrip ? (t as TripSession).startLocation || 'Pickup location' : (t as Task).pickupLocation || 'Pickup location'}
+            </Text>
+          </View>
+          <View style={styles.routeLine} />
+          <View style={styles.routeRow}>
+            <View style={[styles.routeDot, { backgroundColor: COLORS.SUCCESS }]} />
+            <Text style={styles.routeText} numberOfLines={1}>
+              {isSessionTrip ? (t as TripSession).endLocation || 'Destination' : (t as Task).deliveryLocation || 'Destination'}
+            </Text>
+          </View>
+        </View>
+
+        <View style={styles.tripFooter}>
+          <Text style={styles.driverName}>
+            {isSessionTrip
+              ? `Started ${new Date((t as TripSession).startTime || 0).toLocaleString()}`
+              : tripStatus === 'arrived'
+                ? 'Status: Arrived'
+                : 'Status: In transit'}
+          </Text>
+          <Text style={styles.recipientName}>
+            {isSessionTrip ? `${(t as TripSession).taskIds?.length || 0} tasks` : `👤 ${(t as Task).recipientName || 'Recipient'}`}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
   };
 
   // Quick Action Buttons
@@ -108,72 +171,63 @@ export default function SupervisorDashboardScreen() {
         {/* Ongoing Trips Carousel */}
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Ongoing trips</Text>
+          <Text style={styles.sectionHint}>Swipe through trips or use the arrows to move between cards.</Text>
           {loading && !refreshing ? (
             <ActivityIndicator size="large" color={COLORS.PRIMARY} style={{ marginVertical: SPACING.XL }} />
-          ) : ongoingTrips.length > 0 ? (
-            <View style={{ position: 'relative' }}>
+          ) : activeTripSessions.length > 0 ? (
+            <View>
               <FlatList
                 ref={flatListRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
-                data={ongoingTrips}
-                keyExtractor={t => t.id || Math.random().toString()}
-                contentContainerStyle={{ paddingHorizontal: SPACING.XL, paddingBottom: SPACING.MD }}
+                data={activeTripSessions}
+                keyExtractor={(t, index) => t.id || `${index}`}
+                contentContainerStyle={{ paddingHorizontal: SPACING.XL, paddingBottom: SPACING.SM }}
+                snapToAlignment="start"
+                snapToInterval={itemWidth}
+                decelerationRate="fast"
+                disableIntervalMomentum
+                onMomentumScrollEnd={onMomentumScrollEnd}
+                renderItem={({ item: t }) => renderTripCard(t, true)}
+              />
+
+              <View style={styles.carouselControls}>
+                <TouchableOpacity
+                  style={[styles.carouselButton, currentIndex === 0 && styles.carouselButtonDisabled]}
+                  onPress={shiftLeft}
+                  disabled={currentIndex === 0}
+                >
+                  <Text style={styles.carouselButtonText}>{'‹'} Previous</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.carouselCounter}>
+                  {Math.min(currentIndex + 1, activeTripSessions.length)} of {activeTripSessions.length}
+                </Text>
+
+                <TouchableOpacity
+                  style={[styles.carouselButton, currentIndex >= activeTripSessions.length - 1 && styles.carouselButtonDisabled]}
+                  onPress={shiftRight}
+                  disabled={currentIndex >= activeTripSessions.length - 1}
+                >
+                  <Text style={styles.carouselButtonText}>Next {'›'}</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : ongoingTasks.length > 0 ? (
+            <View>
+              <FlatList
+                ref={flatListRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                data={ongoingTasks}
+                keyExtractor={(t, index) => t.id || `${index}`}
+                contentContainerStyle={{ paddingHorizontal: SPACING.XL, paddingBottom: SPACING.SM }}
+                snapToAlignment="start"
                 snapToInterval={itemWidth}
                 decelerationRate="fast"
                 onMomentumScrollEnd={onMomentumScrollEnd}
-                renderItem={({ item: t }) => (
-                  <TouchableOpacity
-                    style={[styles.tripCard, { width: width * 0.85 }]}
-                    activeOpacity={0.8}
-                    onPress={() => router.push('/supervisor/driverTracking')}
-                  >
-                    <View style={styles.tripCardHeader}>
-                      <View style={[styles.statusBadge, { backgroundColor: t.status === 'arrived' ? COLORS.WARNING + '20' : COLORS.SECONDARY + '20' }]}>
-                        <Text style={[styles.statusText, { color: t.status === 'arrived' ? COLORS.WARNING : COLORS.SECONDARY }]}>
-                          {t.status === 'arrived' ? '📍 Arrived' : '🚚 In Transit'}
-                        </Text>
-                      </View>
-                      {t.priority && (
-                        <View style={[styles.priorityBadge, { backgroundColor: t.priority === 'HIGH' ? COLORS.DANGER : t.priority === 'MEDIUM' ? COLORS.WARNING : COLORS.SUCCESS }]}>
-                          <Text style={styles.priorityText}>{t.priority}</Text>
-                        </View>
-                      )}
-                    </View>
-
-                    <View style={styles.tripRoute}>
-                      <View style={styles.routeRow}>
-                        <View style={[styles.routeDot, { backgroundColor: COLORS.PRIMARY }]} />
-                        <Text style={styles.routeText} numberOfLines={1}>{t.pickupLocation}</Text>
-                      </View>
-                      <View style={styles.routeLine} />
-                      <View style={styles.routeRow}>
-                        <View style={[styles.routeDot, { backgroundColor: COLORS.SUCCESS }]} />
-                        <Text style={styles.routeText} numberOfLines={1}>{t.deliveryLocation}</Text>
-                      </View>
-                    </View>
-
-                    <View style={styles.tripFooter}>
-                      <Text style={styles.driverName}>🚚 {t.assignedDriverName || 'Unassigned'}</Text>
-                      <Text style={styles.recipientName}>👤 {t.recipientName}</Text>
-                    </View>
-                  </TouchableOpacity>
-                )}
+                renderItem={({ item: t }) => renderTripCard(t, false)}
               />
-
-              {/* Left Arrow */}
-              {currentIndex > 0 && (
-                <TouchableOpacity style={[styles.navArrow, { left: SPACING.SM }]} onPress={shiftLeft}>
-                  <Text style={styles.navArrowText}>{'<'}</Text>
-                </TouchableOpacity>
-              )}
-
-              {/* Right Arrow */}
-              {currentIndex < ongoingTrips.length - 1 && (
-                <TouchableOpacity style={[styles.navArrow, { right: SPACING.SM }]} onPress={shiftRight}>
-                  <Text style={styles.navArrowText}>{'>'}</Text>
-                </TouchableOpacity>
-              )}
             </View>
           ) : (
             <View style={styles.emptyCarousel}>
@@ -242,10 +296,18 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.LG, fontWeight: '700', color: COLORS.GRAY_900,
     paddingHorizontal: SPACING.XL, marginBottom: SPACING.MD
   },
+  sectionHint: {
+    fontSize: FONT_SIZES.SM,
+    color: COLORS.GRAY_500,
+    paddingHorizontal: SPACING.XL,
+    marginTop: -SPACING.XS,
+    marginBottom: SPACING.SM,
+  },
   tripCard: {
     backgroundColor: COLORS.WHITE, borderRadius: RADIUS.XL, padding: SPACING.LG,
-    marginRight: SPACING.MD, borderLeftWidth: 4, borderLeftColor: COLORS.SECONDARY,
-    ...SHADOWS.MD,
+    marginRight: SPACING.MD, borderWidth: 1.5, borderColor: '#9EE6AC',
+    shadowColor: 'transparent', shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0,
+    shadowRadius: 0, elevation: 0,
   },
   tripCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.MD },
   statusBadge: { paddingHorizontal: SPACING.SM, paddingVertical: 4, borderRadius: RADIUS.FULL },
@@ -259,6 +321,7 @@ const styles = StyleSheet.create({
   routeLine: { width: 2, height: 14, backgroundColor: COLORS.GRAY_200, marginLeft: 4, marginVertical: 2 },
   tripFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: COLORS.GRAY_100, paddingTop: SPACING.SM },
   driverName: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_700, fontWeight: '600' },
+  activeDriver: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_900, fontWeight: '800' },
   recipientName: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500 },
   emptyCarousel: {
     marginHorizontal: SPACING.XL, backgroundColor: COLORS.WHITE, borderRadius: RADIUS.XL,
@@ -267,24 +330,38 @@ const styles = StyleSheet.create({
   emptyIcon: { fontSize: 40, marginBottom: SPACING.SM },
   emptyText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500 },
 
-  // Carousel Arrows
-  navArrow: {
-    position: 'absolute',
-    top: '35%',
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    justifyContent: 'center',
+  carouselControls: {
+    flexDirection: 'row',
     alignItems: 'center',
-    zIndex: 10,
+    justifyContent: 'space-between',
+    paddingHorizontal: SPACING.XL,
+    marginTop: SPACING.SM,
+  },
+  carouselButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: COLORS.WHITE,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+    borderRadius: RADIUS.FULL,
+    paddingVertical: SPACING.SM,
+    paddingHorizontal: SPACING.MD,
+    minWidth: 110,
     ...SHADOWS.SM,
   },
-  navArrowText: {
-    color: COLORS.WHITE,
-    fontSize: 20,
-    fontWeight: '800',
-    marginTop: -2, // visual alignment
+  carouselButtonDisabled: {
+    opacity: 0.4,
+  },
+  carouselButtonText: {
+    color: COLORS.GRAY_800,
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '700',
+  },
+  carouselCounter: {
+    fontSize: FONT_SIZES.SM,
+    color: COLORS.GRAY_500,
+    fontWeight: '600',
   },
 
   // Action Grid

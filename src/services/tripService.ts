@@ -1,8 +1,26 @@
 import {
-  collection, addDoc, getDoc, getDocs, updateDoc, doc, query, where,
+  collection, addDoc, getDoc, getDocs, updateDoc, doc, query, where, onSnapshot,
 } from 'firebase/firestore';
 import { db } from './firebase';
 import { TripSession, TripStatus, LocationData, Task } from '../types';
+import { notifyTripStarted } from './notificationService';
+
+// Notify all supervisors when a driver starts a trip
+async function notifyAllSupervisorsOfTripStart(tripId: string, driverName: string) {
+  try {
+    const q = query(collection(db, 'users'), where('role', '==', 'supervisor'));
+    const snap = await getDocs(q);
+    for (const d of snap.docs) {
+      try {
+        await notifyTripStarted(d.id, driverName, tripId);
+      } catch (e) {
+        console.log('Failed to notify supervisor', d.id, e);
+      }
+    }
+  } catch (e) {
+    console.log('Failed to fetch supervisors for notifications', e);
+  }
+}
 
 // ─── Start a new trip session ─────────────────────────────────────
 export async function startTrip(
@@ -32,7 +50,16 @@ export async function startTrip(
   };
 
   const docRef = await addDoc(collection(db, 'tripSessions'), tripData);
-  return docRef.id;
+  const tripId = docRef.id;
+
+  // Notify supervisors that a trip has started (best-effort)
+  try {
+    await notifyAllSupervisorsOfTripStart(tripId, driverName);
+  } catch (e) {
+    console.log('notifyAllSupervisorsOfTripStart error:', e);
+  }
+
+  return tripId;
 }
 
 // ─── Get active trip for a driver ─────────────────────────────────
@@ -205,6 +232,19 @@ export async function cancelTrip(tripId: string): Promise<void> {
     status: 'cancelled' as TripStatus,
     endTime: Date.now(),
   });
+}
+
+// ─── Subscribe to trip sessions (real-time) ───────────────────────
+export function subscribeToTrips(callback: (trips: TripSession[]) => void): () => void {
+  const q = collection(db, 'tripSessions');
+  const unsub = onSnapshot(q, (snap) => {
+    const trips = snap.docs.map(d => ({ id: d.id, ...d.data() } as TripSession))
+      .sort((a, b) => (b.startTime || 0) - (a.startTime || 0));
+    callback(trips);
+  }, (err) => {
+    console.log('subscribeToTrips error', err);
+  });
+  return unsub;
 }
 
 // ─── Link all accepted/assigned tasks to a trip ──────────────────
