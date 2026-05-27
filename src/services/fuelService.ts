@@ -1,9 +1,12 @@
 import {
   collection, addDoc, getDocs, updateDoc, doc, query, where,
 } from 'firebase/firestore';
+import { db } from './firebase';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { addToQueue } from './offlineService';
 import { FuelExpense, OdometerReading, ExpenseStatus, OdometerType } from '../types';
 import { uploadFileToStorage } from './storageUpload';
-import { db } from './firebase';
 
 // ═══════════════════════════════════════════════════════════════════
 // FUEL EXPENSES
@@ -89,4 +92,68 @@ export function calculateDailyDistance(readings: OdometerReading[]): number {
   const first = sorted[0].reading;
   const last = sorted[sorted.length - 1].reading;
   return Math.max(0, last - first);
+}
+
+async function checkOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    return !!(state.isConnected && state.isInternetReachable !== false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Offline-aware add odometer reading.
+ */
+export async function offlineAddOdometerReading(reading: Omit<OdometerReading, 'id'>): Promise<string> {
+  const online = await checkOnline();
+  if (online) {
+    return addOdometerReading(reading);
+  }
+
+  const tempId = `temp_odo_${Date.now()}`;
+  // Queue a standalone odometer reading
+  await addToQueue('add_odometer_reading', tempId, {
+    reading,
+  });
+
+  return tempId;
+}
+
+/**
+ * Offline-aware upload odometer photo.
+ */
+export async function offlineUploadOdometerPhoto(
+  readingId: string,
+  imageUri: string,
+): Promise<string> {
+  const online = await checkOnline();
+  if (online) {
+    return uploadOdometerPhoto(readingId, imageUri);
+  }
+
+  try {
+    const raw = await AsyncStorage.getItem('@pickpack_offline_queue');
+    if (raw) {
+      const queue = JSON.parse(raw) as any[];
+      const updated = queue.map(item => {
+        if (item.action === 'add_odometer_reading' && item.taskId === readingId) {
+          return {
+            ...item,
+            payload: {
+              ...item.payload,
+              photoUri: imageUri,
+            },
+          };
+        }
+        return item;
+      });
+      await AsyncStorage.setItem('@pickpack_offline_queue', JSON.stringify(updated));
+    }
+  } catch (e) {
+    console.log('offlineUploadOdometerPhoto error:', e);
+  }
+
+  return imageUri;
 }

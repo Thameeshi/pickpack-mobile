@@ -364,3 +364,164 @@ export async function verifyQRScan(taskId: string, scannedCode: string): Promise
   });
   return true;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// OFFLINE-AWARE WRAPPERS
+// These check connectivity and either execute directly or queue.
+// ═══════════════════════════════════════════════════════════════════
+import NetInfo from '@react-native-community/netinfo';
+import {
+  addToQueue,
+  updateCachedTask,
+  getCachedTasks,
+} from './offlineService';
+
+/** Check if the device currently has internet */
+async function checkOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    return !!(state.isConnected && state.isInternetReachable !== false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Offline-aware accept task.
+ * Returns `{ offline: true }` if action was queued, `{ offline: false }` if executed live.
+ */
+export async function offlineAcceptTask(taskId: string): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await acceptTask(taskId);
+    return { offline: false };
+  }
+
+  // Queue the action
+  await addToQueue('accept_task', taskId);
+  // Optimistically update the cache
+  await updateCachedTask(taskId, {
+    status: 'accepted' as TaskStatus,
+    driverAccepted: true,
+    acceptedAt: Date.now(),
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware reject task.
+ */
+export async function offlineRejectTask(
+  taskId: string,
+  reason?: string,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await rejectTask(taskId, reason);
+    return { offline: false };
+  }
+
+  await addToQueue('reject_task', taskId, { reason: reason || '' });
+  await updateCachedTask(taskId, {
+    status: 'pending' as TaskStatus,
+    assignedDriverId: undefined,
+    assignedDriverName: undefined,
+    driverAccepted: false,
+    rejectedReason: reason || '',
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware update task status.
+ */
+export async function offlineUpdateTaskStatus(
+  taskId: string,
+  status: TaskStatus,
+  extras?: Partial<Task>,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await updateTaskStatus(taskId, status, extras);
+    return { offline: false };
+  }
+
+  await addToQueue('update_status', taskId, { status, extras: extras || {} });
+  const cacheUpdates: Partial<Task> = {
+    status,
+    offlineSynced: false,
+    ...extras,
+  };
+  if (status === 'arrived') cacheUpdates.arrivedAt = Date.now();
+  if (status === 'delivered') cacheUpdates.completedAt = Date.now();
+  await updateCachedTask(taskId, cacheUpdates);
+  return { offline: true };
+}
+
+/**
+ * Offline-aware complete task (with proof of delivery).
+ * When offline, local file URIs are stored in the queue and will be
+ * uploaded by the sync engine when the connection returns.
+ */
+export async function offlineCompleteTask(
+  taskId: string,
+  proofUrl: string,
+  lat: number,
+  lng: number,
+  signatureUrl?: string,
+  documentUrl?: string,
+  recipientConfirmedName?: string,
+  odometerReading?: number,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await completeTask(taskId, proofUrl, lat, lng, signatureUrl, documentUrl, recipientConfirmedName, odometerReading);
+    return { offline: false };
+  }
+
+  await addToQueue('complete_task', taskId, {
+    proofUrl,
+    lat,
+    lng,
+    signatureUrl: signatureUrl || '',
+    documentUrl: documentUrl || '',
+    recipientConfirmedName: recipientConfirmedName || '',
+    odometerReading: odometerReading || 0,
+  });
+  await updateCachedTask(taskId, {
+    status: 'delivered' as TaskStatus,
+    proofOfDeliveryUrl: proofUrl,
+    signatureUrl: signatureUrl || undefined,
+    deliveryDocumentUrl: documentUrl || undefined,
+    recipientConfirmedName: recipientConfirmedName || undefined,
+    deliveryLatitude: lat,
+    deliveryLongitude: lng,
+    completedAt: Date.now(),
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware get task by ID.
+ * Returns task from Firestore if online, otherwise falls back to local cache.
+ */
+export async function offlineGetTaskById(taskId: string): Promise<Task | null> {
+  const online = await checkOnline();
+  if (online) {
+    try {
+      const task = await getTaskById(taskId);
+      if (task) {
+        // Cache this single task or update cache
+        await updateCachedTask(taskId, task);
+        return task;
+      }
+    } catch {}
+  }
+  
+  // Fall back to cache
+  const cached = await getCachedTasks();
+  return cached.find(t => t.id === taskId) || null;
+}

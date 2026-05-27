@@ -5,7 +5,13 @@ import {
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
-import { getTaskById, updateTaskStatus, acceptTask, rejectTask } from '../../src/services/taskService';
+import {
+  offlineGetTaskById,
+  offlineUpdateTaskStatus,
+  offlineAcceptTask,
+  offlineRejectTask,
+} from '../../src/services/taskService';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { getActiveTrip } from '../../src/services/tripService';
 import { notifyTaskResponse } from '../../src/services/notificationService';
 import { Task, TaskStatus, TripSession, TASK_STATUS_LABELS, TASK_STATUS_ORDER } from '../../src/types';
@@ -31,6 +37,7 @@ export default function TaskDetailsScreen() {
   const router = useRouter();
   const { taskId } = useLocalSearchParams<{ taskId: string }>();
   const { user, profile } = useAuth();
+  const { isOnline } = useOfflineSync();
   const [task, setTask] = useState<Task | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
@@ -42,7 +49,7 @@ export default function TaskDetailsScreen() {
   const loadTask = async () => {
     if (!taskId) return;
     try {
-      const data = await getTaskById(taskId);
+      const data = await offlineGetTaskById(taskId);
       setTask(data);
     } catch (e) {
       console.error(e);
@@ -75,18 +82,24 @@ export default function TaskDetailsScreen() {
       if (remaining <= 0) {
         (async () => {
           try {
-            await rejectTask(taskId!, 'Auto-rejected: 30-minute approval deadline expired');
+            const res = await offlineRejectTask(taskId!, 'Auto-rejected: 30-minute approval deadline expired');
             if (task.supervisorId) {
-              await notifyTaskResponse(
-                task.supervisorId,
-                profile?.name || 'Driver',
-                taskId!,
-                false,
-                'Auto-rejected: approval deadline expired',
-              );
+              try {
+                await notifyTaskResponse(
+                  task.supervisorId,
+                  profile?.name || 'Driver',
+                  taskId!,
+                  false,
+                  'Auto-rejected: approval deadline expired',
+                );
+              } catch {}
             }
             await loadTask();
-            Alert.alert('⏰ Time Expired', 'This task was automatically unassigned because the 30-minute approval deadline passed.');
+            if (res.offline) {
+              Alert.alert('⏰ Time Expired (Offline)', 'This task was unassigned locally because the 30-minute approval deadline passed.');
+            } else {
+              Alert.alert('⏰ Time Expired', 'This task was automatically unassigned because the 30-minute approval deadline passed.');
+            }
           } catch {}
         })();
       }
@@ -134,14 +147,18 @@ export default function TaskDetailsScreen() {
   const performStatusUpdate = async (newStatus: TaskStatus) => {
     setActionLoading(true);
     try {
-      await updateTaskStatus(taskId!, newStatus);
+      const res = await offlineUpdateTaskStatus(taskId!, newStatus);
       await loadTask();
       // Refresh active trip to show the link
       if (user?.uid) {
-        const trip = await getActiveTrip(user.uid);
-        setActiveTrip(trip);
+        try {
+          const trip = await getActiveTrip(user.uid);
+          setActiveTrip(trip);
+        } catch {}
       }
-      if (newStatus === 'in_progress') {
+      if (res.offline) {
+        Alert.alert('Offline Mode', 'Status updated locally! It will sync once you are online.');
+      } else if (newStatus === 'in_progress') {
         Alert.alert('🚚 Delivery Started', activeTrip ? 'Linked to your active trip. Drive safely!' : 'Drive safely!');
       }
     } catch (e: any) {
@@ -184,6 +201,13 @@ export default function TaskDetailsScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Offline Banner */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineText}>⚡ Offline Mode — Working Locally</Text>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -406,12 +430,18 @@ export default function TaskDetailsScreen() {
                   onPress={async () => {
                     setActionLoading(true);
                     try {
-                      await acceptTask(taskId!);
+                      const res = await offlineAcceptTask(taskId!);
                       if (task.supervisorId) {
-                        await notifyTaskResponse(task.supervisorId, profile?.name || 'Driver', taskId!, true);
+                        try {
+                          await notifyTaskResponse(task.supervisorId, profile?.name || 'Driver', taskId!, true);
+                        } catch {}
                       }
                       await loadTask();
-                      Alert.alert('✅ Accepted', 'You have accepted this delivery. You can now start when ready.');
+                      if (res.offline) {
+                        Alert.alert('Offline Mode', 'Trip accepted locally! It will sync once you are online.');
+                      } else {
+                        Alert.alert('✅ Accepted', 'You have accepted this delivery. You can now start when ready.');
+                      }
                     } catch (e: any) { Alert.alert('Error', e.message); }
                     finally { setActionLoading(false); }
                   }}
@@ -450,13 +480,21 @@ export default function TaskDetailsScreen() {
                         onPress={async () => {
                           setActionLoading(true);
                           try {
-                            await rejectTask(taskId!, rejectReason);
+                            const res = await offlineRejectTask(taskId!, rejectReason);
                             if (task.supervisorId) {
-                              await notifyTaskResponse(task.supervisorId, profile?.name || 'Driver', taskId!, false, rejectReason);
+                              try {
+                                await notifyTaskResponse(task.supervisorId, profile?.name || 'Driver', taskId!, false, rejectReason);
+                              } catch {}
                             }
-                            Alert.alert('Rejected', 'The delivery has been rejected and unassigned.', [
-                              { text: 'OK', onPress: () => router.back() },
-                            ]);
+                            if (res.offline) {
+                              Alert.alert('Offline Mode', 'Trip rejected locally! It will sync once you are online.', [
+                                { text: 'OK', onPress: () => router.back() },
+                              ]);
+                            } else {
+                              Alert.alert('Rejected', 'The delivery has been rejected and unassigned.', [
+                                { text: 'OK', onPress: () => router.back() },
+                              ]);
+                            }
                           } catch (e: any) { Alert.alert('Error', e.message); }
                           finally { setActionLoading(false); }
                         }}
@@ -699,4 +737,19 @@ const styles = StyleSheet.create({
     borderWidth: 1, borderColor: COLORS.PRIMARY + '20',
   },
   mapQuickText: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.PRIMARY },
+
+  // Offline banner styles
+  offlineBanner: {
+    backgroundColor: COLORS.DANGER + '15',
+    paddingVertical: SPACING.SM,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.DANGER + '30',
+  },
+  offlineText: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+    color: COLORS.DANGER,
+  },
 });

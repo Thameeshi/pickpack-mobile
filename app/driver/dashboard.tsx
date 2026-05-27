@@ -5,13 +5,14 @@ import {
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
-import { useTasksByDriver } from '../../src/hooks/useTasks';
+import { useOfflineTasks } from '../../src/hooks/useOfflineTasks';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { useNotifications } from '../../src/hooks/useNotifications';
-import { getActiveTrip } from '../../src/services/tripService';
+import { offlineGetActiveTrip } from '../../src/services/tripService';
 import { getFuelExpensesByDriver } from '../../src/services/fuelService';
 import { Task, TaskStatus, TripSession, TASK_STATUS_LABELS, FuelExpense } from '../../src/types';
 import { formatDateTime } from '../../src/utils/helpers';
-import { acceptTask, rejectTask } from '../../src/services/taskService';
+import { offlineAcceptTask, offlineRejectTask } from '../../src/services/taskService';
 import { startTrackingDriverLocation, stopTrackingDriverLocation } from '../../src/services/locationService';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 import * as Location from 'expo-location';
@@ -31,7 +32,8 @@ const STATUS_COLORS: Record<TaskStatus, string> = {
 export default function DriverDashboardScreen() {
   const router = useRouter();
   const { user, profile, logout } = useAuth();
-  const { tasks, loading, refetch } = useTasksByDriver(user?.uid || '');
+  const { isOnline, pendingCount, isSyncing, syncNow, refreshCounts } = useOfflineSync();
+  const { tasks, loading, refetch } = useOfflineTasks(user?.uid || '', isOnline);
   const { unreadCount } = useNotifications(user?.uid || '');
   const [refreshing, setRefreshing] = useState(false);
   const [trackingActive, setTrackingActive] = useState(false);
@@ -45,13 +47,13 @@ export default function DriverDashboardScreen() {
   // Load active trip session & fuel expenses
   useFocusEffect(useCallback(() => {
     if (user?.uid) {
-      getActiveTrip(user.uid).then(setActiveTrip2).catch(() => { });
+      offlineGetActiveTrip(user.uid).then(setActiveTrip2).catch(() => { });
       getFuelExpensesByDriver(user.uid).then(setFuelExpenses).catch(() => { });
     }
   }, [user?.uid]));
 
   // Refetch when screen is focused
-  useFocusEffect(useCallback(() => { refetch(); }, [refetch]));
+  useFocusEffect(useCallback(() => { refetch(); refreshCounts(); }, [refetch, refreshCounts]));
 
   // Listen for unread chat messages
   useEffect(() => {
@@ -135,9 +137,14 @@ export default function DriverDashboardScreen() {
 
   const handleAccept = async (taskId: string) => {
     try {
-      await acceptTask(taskId);
-      Alert.alert('Success', 'Trip accepted!');
+      const res = await offlineAcceptTask(taskId);
+      if (res.offline) {
+        Alert.alert('Offline Mode', 'Trip accepted locally! It will sync once you are online.');
+      } else {
+        Alert.alert('Success', 'Trip accepted!');
+      }
       refetch();
+      refreshCounts();
     } catch (error) {
       Alert.alert('Error', 'Failed to accept trip.');
     }
@@ -151,9 +158,14 @@ export default function DriverDashboardScreen() {
         style: 'destructive',
         onPress: async () => {
           try {
-            await rejectTask(taskId, 'Driver rejected from dashboard');
-            Alert.alert('Success', 'Trip rejected.');
+            const res = await offlineRejectTask(taskId, 'Driver rejected from dashboard');
+            if (res.offline) {
+              Alert.alert('Offline Mode', 'Trip rejected locally! It will sync once you are online.');
+            } else {
+              Alert.alert('Success', 'Trip rejected.');
+            }
             refetch();
+            refreshCounts();
           } catch (error) {
             Alert.alert('Error', 'Failed to reject trip.');
           }
@@ -180,6 +192,35 @@ export default function DriverDashboardScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Offline & Sync Banners */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <View style={styles.offlineBannerLeft}>
+            <Text style={styles.offlineIcon}>⚡</Text>
+            <Text style={styles.offlineText}>Offline Mode — Working Locally</Text>
+          </View>
+          {pendingCount > 0 && (
+            <View style={styles.pendingBadge}>
+              <Text style={styles.pendingBadgeText}>{pendingCount} pending sync</Text>
+            </View>
+          )}
+        </View>
+      )}
+
+      {isOnline && pendingCount > 0 && (
+        <TouchableOpacity style={styles.syncBanner} onPress={() => syncNow()} disabled={isSyncing}>
+          <View style={styles.offlineBannerLeft}>
+            <Text style={styles.syncIcon}>{isSyncing ? '🔄' : '📶'}</Text>
+            <Text style={styles.syncText}>
+              {isSyncing ? 'Syncing updates...' : `${pendingCount} offline action(s) ready`}
+            </Text>
+          </View>
+          {!isSyncing && (
+            <Text style={styles.syncActionText}>Sync Now</Text>
+          )}
+        </TouchableOpacity>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -190,6 +231,32 @@ export default function DriverDashboardScreen() {
             </Text>
           </View>
           <View style={{ flexDirection: 'row', gap: SPACING.SM }}>
+            {/* Cloud Sync Status Icon */}
+            <TouchableOpacity 
+              style={[styles.notifBtn, !isOnline && { backgroundColor: COLORS.WARNING + '15' }]} 
+              onPress={() => {
+                if (isOnline && pendingCount > 0) {
+                  syncNow();
+                } else {
+                  Alert.alert(
+                    'Cloud Sync Status',
+                    isOnline 
+                      ? `You are ONLINE. ${pendingCount > 0 ? `${pendingCount} action(s) pending sync.` : 'All actions are perfectly synced with the server!'}`
+                      : `You are OFFLINE. ${pendingCount > 0 ? `${pendingCount} action(s) saved locally, waiting for internet connection to sync.` : 'Working in Offline Mode. No pending updates.'}`
+                  );
+                }
+              }}
+            >
+              <Text style={styles.notifBtnText}>
+                {isOnline ? (pendingCount > 0 ? '🔄' : '☁️') : '⚡'}
+              </Text>
+              {pendingCount > 0 && (
+                <View style={[styles.notifBadge, { backgroundColor: isOnline ? COLORS.PRIMARY : COLORS.WARNING }]}>
+                  <Text style={styles.notifBadgeText}>{pendingCount}</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
             <TouchableOpacity style={styles.notifBtn} onPress={() => router.push('/driver/chatList')}>
               <Text style={styles.notifBtnText}>💬</Text>
               {unreadMessages > 0 && (
@@ -877,4 +944,63 @@ const styles = StyleSheet.create({
   messageBannerTitle: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.GRAY_900, marginBottom: 2 },
   messageBannerText: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_500 },
   messageBannerArrow: { fontSize: FONT_SIZES.LG, color: COLORS.INFO, fontWeight: '700', marginLeft: SPACING.SM },
+
+  // ═══ Offline & Sync Banners ═══
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.DANGER + '15',
+    paddingVertical: SPACING.MD,
+    paddingHorizontal: SPACING.LG,
+    borderBottomWidth: 1.5,
+    borderBottomColor: COLORS.DANGER + '40',
+  },
+  offlineBannerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.SM,
+  },
+  offlineIcon: {
+    fontSize: FONT_SIZES.MD,
+  },
+  offlineText: {
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '700',
+    color: COLORS.DANGER,
+  },
+  pendingBadge: {
+    backgroundColor: COLORS.DANGER,
+    paddingHorizontal: SPACING.SM,
+    paddingVertical: 2,
+    borderRadius: RADIUS.SM,
+  },
+  pendingBadgeText: {
+    color: COLORS.WHITE,
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+  },
+  syncBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: COLORS.INFO + '15',
+    paddingVertical: SPACING.MD,
+    paddingHorizontal: SPACING.LG,
+    borderBottomWidth: 1.5,
+    borderBottomColor: COLORS.INFO + '40',
+  },
+  syncIcon: {
+    fontSize: FONT_SIZES.MD,
+  },
+  syncText: {
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '700',
+    color: COLORS.INFO,
+  },
+  syncActionText: {
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '800',
+    color: COLORS.PRIMARY,
+  },
 });

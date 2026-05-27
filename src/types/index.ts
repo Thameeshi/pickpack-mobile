@@ -379,7 +379,29 @@ export interface AppNotification {
 }
 
 // ===== OFFLINE QUEUE =====
+export type OfflineActionType =
+  | 'accept_task'
+  | 'reject_task'
+  | 'update_status'
+  | 'complete_task'
+  | 'start_trip'
+  | 'end_trip'
+  | 'add_odometer_reading';
+
 export interface OfflineQueueItem {
+  id: string;
+  action: OfflineActionType;
+  taskId: string;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  synced: boolean;
+  retryCount: number;
+  maxRetries: number;
+  lastError?: string;
+}
+
+// Legacy compat alias
+export interface OfflineQueueItemLegacy {
   id: string;
   collection: string;
   docId?: string;

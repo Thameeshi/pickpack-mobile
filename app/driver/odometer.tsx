@@ -7,16 +7,18 @@ import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
 import {
-  addOdometerReading, getTodayOdometerReadings,
-  uploadOdometerPhoto, calculateDailyDistance,
+  offlineAddOdometerReading, getTodayOdometerReadings,
+  offlineUploadOdometerPhoto, calculateDailyDistance,
 } from '../../src/services/fuelService';
 import { getCurrentLocation } from '../../src/services/locationService';
 import { OdometerType, OdometerReading } from '../../src/types';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function OdometerScreen() {
   const router = useRouter();
   const { user, profile } = useAuth();
+  const { isOnline, pendingCount, isSyncing, syncNow } = useOfflineSync();
   const [reading, setReading] = useState('');
   const [type, setType] = useState<OdometerType>('start_of_day');
   const [photo, setPhoto] = useState<string | null>(null);
@@ -88,17 +90,23 @@ export default function OdometerScreen() {
         verified: false,
       };
 
-      const docId = await addOdometerReading(readingData);
+      const docId = await offlineAddOdometerReading(readingData);
 
       // Upload photo
       try {
-        const photoUrl = await uploadOdometerPhoto(docId, photo);
-        // We could update the doc with the photoUrl here
+        const photoUrl = await offlineUploadOdometerPhoto(docId, photo);
       } catch {}
 
-      Alert.alert('✅ Saved', `${type === 'start_of_day' ? 'Start' : 'End'} of day reading recorded: ${reading} km`, [
-        { text: 'OK', onPress: () => { loadTodayReadings(); setReading(''); setPhoto(null); } },
-      ]);
+      const isOfflineMode = !isOnline;
+      Alert.alert(
+        isOfflineMode ? '⚡ Saved Locally' : '✅ Saved',
+        isOfflineMode
+          ? `Working Offline. Odometer reading (${reading} km) saved locally. It will automatically sync when connection returns.`
+          : `${type === 'start_of_day' ? 'Start' : 'End'} of day reading recorded: ${reading} km`,
+        [
+          { text: 'OK', onPress: () => { loadTodayReadings(); setReading(''); setPhoto(null); } },
+        ]
+      );
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Failed to save reading');
     } finally {
@@ -117,7 +125,39 @@ export default function OdometerScreen() {
           <Text style={styles.backBtn}>← Back</Text>
         </TouchableOpacity>
         <Text style={styles.title}>🔢 Odometer</Text>
-        <View style={{ width: 50 }} />
+        <TouchableOpacity
+          style={{
+            width: 40, height: 40, borderRadius: 20,
+            justifyContent: 'center', alignItems: 'center',
+            backgroundColor: !isOnline ? COLORS.WARNING + '20' : 'rgba(255,255,255,0.15)',
+          }}
+          onPress={() => {
+            if (isOnline && pendingCount > 0) {
+              syncNow();
+            } else {
+              Alert.alert(
+                'Cloud Sync Status',
+                isOnline 
+                  ? `You are ONLINE. ${pendingCount > 0 ? `${pendingCount} action(s) pending sync.` : 'All actions are perfectly synced with the server!'}`
+                  : `You are OFFLINE. ${pendingCount > 0 ? `${pendingCount} action(s) saved locally, waiting for internet to sync.` : 'Working in Offline Mode. No pending updates.'}`
+              );
+            }
+          }}
+        >
+          <Text style={{ fontSize: 18, color: COLORS.WHITE }}>
+            {isOnline ? (pendingCount > 0 ? '🔄' : '☁️') : '⚡'}
+          </Text>
+          {pendingCount > 0 && (
+            <View style={{
+              position: 'absolute', top: -4, right: -4,
+              backgroundColor: isOnline ? COLORS.PRIMARY : COLORS.WARNING,
+              borderRadius: 8, minWidth: 16, height: 16,
+              justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+            }}>
+              <Text style={{ fontSize: 10, fontWeight: 'bold', color: COLORS.WHITE }}>{pendingCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>

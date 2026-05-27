@@ -4,6 +4,9 @@ import {
 import { db } from './firebase';
 import { TripSession, TripStatus, LocationData, Task } from '../types';
 import { notifyTripStarted } from './notificationService';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import NetInfo from '@react-native-community/netinfo';
+import { addToQueue, getCachedTasks, updateCachedTask } from './offlineService';
 
 // Notify all supervisors when a driver starts a trip
 async function notifyAllSupervisorsOfTripStart(tripId: string, driverName: string) {
@@ -292,4 +295,195 @@ function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) *
     Math.sin(dLon / 2) * Math.sin(dLon / 2);
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function checkOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    return !!(state.isConnected && state.isInternetReachable !== false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Offline-aware start trip.
+ * Saves active trip locally and queues firestore sync when online.
+ */
+export async function offlineStartTrip(
+  driverId: string,
+  driverName: string,
+  startOdometer: number,
+  startLocation?: string,
+  endLocation?: string,
+  middleLocations?: string[],
+  photoUri?: string | null,
+  location?: { lat: number; lng: number } | null,
+): Promise<string> {
+  const online = await checkOnline();
+  if (online) {
+    const tripId = await startTrip(driverId, driverName, startOdometer, startLocation, endLocation, middleLocations);
+    const tripData: TripSession = {
+      id: tripId,
+      driverId,
+      driverName,
+      status: 'active',
+      startOdometer,
+      startTime: Date.now(),
+      taskIds: [],
+      fuelExpenseIds: [],
+      routeBreadcrumbs: [],
+      startLocation: startLocation || '',
+      endLocation: endLocation || '',
+      middleLocations: middleLocations || [],
+    };
+    await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(tripData));
+    return tripId;
+  }
+
+  const tempTripId = `temp_trip_${Date.now()}`;
+  const tripData: TripSession = {
+    id: tempTripId,
+    driverId,
+    driverName,
+    status: 'active',
+    startOdometer,
+    startTime: Date.now(),
+    taskIds: [],
+    fuelExpenseIds: [],
+    routeBreadcrumbs: [],
+    startLocation: startLocation || '',
+    endLocation: endLocation || '',
+    middleLocations: middleLocations || [],
+  };
+
+  await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(tripData));
+
+  await addToQueue('start_trip', tempTripId, {
+    driverId,
+    driverName,
+    startOdometer,
+    startLocation: startLocation || '',
+    endLocation: endLocation || '',
+    middleLocations: middleLocations || [],
+    photoUri: photoUri || null,
+    location: location || null,
+  });
+
+  return tempTripId;
+}
+
+/**
+ * Offline-aware end trip.
+ */
+export async function offlineEndTrip(
+  tripId: string,
+  endOdometer: number,
+  photoUri?: string | null,
+  location?: { lat: number; lng: number } | null,
+): Promise<TripSession> {
+  const online = await checkOnline();
+  if (online) {
+    const summary = await endTrip(tripId, endOdometer);
+    await AsyncStorage.removeItem('@pickpack_active_trip');
+    return summary;
+  }
+
+  const raw = await AsyncStorage.getItem('@pickpack_active_trip');
+  if (!raw) throw new Error('No active trip session found in local cache.');
+  const trip = JSON.parse(raw) as TripSession;
+
+  const totalDistance = Math.max(0, endOdometer - trip.startOdometer);
+
+  const updates = {
+    status: 'completed' as TripStatus,
+    endOdometer,
+    totalDistance,
+    endTime: Date.now(),
+    deliveriesCompleted: trip.taskIds.length,
+    deliveriesFailed: 0,
+    totalFuelCost: 0,
+    totalFuelLitres: 0,
+  };
+
+  const summary = { ...trip, ...updates };
+
+  await addToQueue('end_trip', tripId, {
+    endOdometer,
+    photoUri: photoUri || null,
+    location: location || null,
+  });
+
+  await AsyncStorage.removeItem('@pickpack_active_trip');
+
+  return summary;
+}
+
+/**
+ * Offline-aware get active trip.
+ */
+export async function offlineGetActiveTrip(driverId: string): Promise<TripSession | null> {
+  try {
+    const raw = await AsyncStorage.getItem('@pickpack_active_trip');
+    if (raw) {
+      const trip = JSON.parse(raw) as TripSession;
+      if (trip.driverId === driverId && trip.status === 'active') {
+        return trip;
+      }
+    }
+  } catch {}
+
+  const online = await checkOnline();
+  if (online) {
+    try {
+      const trip = await getActiveTrip(driverId);
+      if (trip) {
+        await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(trip));
+        return trip;
+      }
+    } catch {}
+  }
+
+  return null;
+}
+
+/**
+ * Offline-aware link accepted tasks to trip.
+ */
+export async function offlineLinkAcceptedTasksToTrip(
+  driverId: string,
+  tripId: string,
+): Promise<string[]> {
+  const online = await checkOnline();
+  if (online) {
+    return linkAcceptedTasksToTrip(driverId, tripId);
+  }
+
+  const cachedTasks = await getCachedTasks();
+  const linkedTaskIds: string[] = [];
+
+  for (const task of cachedTasks) {
+    if (
+      task.assignedDriverId === driverId &&
+      ['accepted', 'assigned'].includes(task.status) &&
+      task.status !== 'delivered' &&
+      task.status !== 'failed'
+    ) {
+      if (task.id) {
+        await updateCachedTask(task.id, { tripId });
+        linkedTaskIds.push(task.id);
+      }
+    }
+  }
+
+  const raw = await AsyncStorage.getItem('@pickpack_active_trip');
+  if (raw) {
+    const trip = JSON.parse(raw) as TripSession;
+    if (trip.id === tripId) {
+      trip.taskIds = [...new Set([...(trip.taskIds || []), ...linkedTaskIds])];
+      await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(trip));
+    }
+  }
+
+  return linkedTaskIds;
 }
