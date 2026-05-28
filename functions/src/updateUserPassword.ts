@@ -18,7 +18,7 @@ export const updateUserPassword = functions.https.onRequest(
     // Enable CORS
     response.set('Access-Control-Allow-Origin', '*');
     response.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS, POST, PUT');
-    response.set('Access-Control-Allow-Headers', 'Content-Type');
+    response.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     if (request.method === 'OPTIONS') {
       response.status(204).send('');

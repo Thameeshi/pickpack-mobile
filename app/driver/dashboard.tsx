@@ -1,9 +1,10 @@
-import React, { useEffect, useCallback, useState } from 'react';
+import React, { useEffect, useCallback, useRef, useState } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TouchableOpacity,
-  ActivityIndicator, RefreshControl, Alert, Image,
+  ActivityIndicator, RefreshControl, Alert, Image, Modal,
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useOfflineTasks } from '../../src/hooks/useOfflineTasks';
 import { useOfflineSync } from '../../src/hooks/useOfflineSync';
@@ -12,8 +13,7 @@ import { offlineGetActiveTrip } from '../../src/services/tripService';
 import { getFuelExpensesByDriver } from '../../src/services/fuelService';
 import { Task, TaskStatus, TripSession, TASK_STATUS_LABELS, FuelExpense } from '../../src/types';
 import { formatDateTime } from '../../src/utils/helpers';
-import { offlineAcceptTask, offlineRejectTask } from '../../src/services/taskService';
-import { startTrackingDriverLocation, stopTrackingDriverLocation } from '../../src/services/locationService';
+import { offlineAcceptTask, offlineGetTaskById, offlineRejectTask } from '../../src/services/taskService';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 import * as Location from 'expo-location';
 import { collection, query, where, onSnapshot, orderBy, limit } from 'firebase/firestore';
@@ -36,8 +36,10 @@ export default function DriverDashboardScreen() {
   const { tasks, loading, refetch } = useOfflineTasks(user?.uid || '', isOnline);
   const { unreadCount } = useNotifications(user?.uid || '');
   const [refreshing, setRefreshing] = useState(false);
-  const [trackingActive, setTrackingActive] = useState(false);
+  const [syncStatusVisible, setSyncStatusVisible] = useState(false);
+  const wasSyncingRef = useRef(false);
   const [activeTrip2, setActiveTrip2] = useState<TripSession | null>(null);
+  const [nextProofTask, setNextProofTask] = useState<{ taskId: string; supervisorId?: string } | null>(null);
   const [fuelExpenses, setFuelExpenses] = useState<FuelExpense[]>([]);
   const [currentAddress, setCurrentAddress] = useState<string>('Locating...');
   const [unreadMessages, setUnreadMessages] = useState(0);
@@ -47,7 +49,24 @@ export default function DriverDashboardScreen() {
   // Load active trip session & fuel expenses
   useFocusEffect(useCallback(() => {
     if (user?.uid) {
-      offlineGetActiveTrip(user.uid).then(setActiveTrip2).catch(() => { });
+      offlineGetActiveTrip(user.uid).then(async (trip) => {
+        setActiveTrip2(trip);
+        if (trip?.taskIds && trip.taskIds.length > 0) {
+          try {
+            for (const tid of trip.taskIds) {
+              const t = await offlineGetTaskById(tid);
+              if (!t) continue;
+              const missingProof = !t.proofOfDeliveryUrl || !t.signatureUrl || !t.deliveryDocumentUrl;
+              const needsDelivery = t.status !== 'delivered';
+              if (needsDelivery || missingProof) {
+                setNextProofTask({ taskId: tid, supervisorId: t.supervisorId });
+                return;
+              }
+            }
+          } catch { }
+        }
+        setNextProofTask(null);
+      }).catch(() => { });
       getFuelExpensesByDriver(user.uid).then(setFuelExpenses).catch(() => { });
     }
   }, [user?.uid]));
@@ -85,17 +104,7 @@ export default function DriverDashboardScreen() {
     return unsub;
   }, [user?.uid]);
 
-  // Start location tracking when driver has an active trip
   const activeTrip = tasks.find(t => t.status === 'in_progress' || t.status === 'arrived');
-  useEffect(() => {
-    if (activeTrip && user?.uid && !trackingActive) {
-      startTrackingDriverLocation(user.uid).then(() => setTrackingActive(true)).catch(() => { });
-    } else if (!activeTrip && trackingActive) {
-      stopTrackingDriverLocation();
-      setTrackingActive(false);
-    }
-    return () => { stopTrackingDriverLocation(); };
-  }, [activeTrip?.id, user?.uid]);
 
   // Track driver's current location for UI display
   useEffect(() => {
@@ -134,6 +143,24 @@ export default function DriverDashboardScreen() {
   }, [activeTrip?.id]);
 
   const handleRefresh = async () => { setRefreshing(true); await refetch(); setRefreshing(false); };
+
+  useEffect(() => {
+    // Offline actions can affect trip/task state. Once syncing completes, refetch so UI updates.
+    if (isSyncing) wasSyncingRef.current = true;
+    if (wasSyncingRef.current && !isSyncing && isOnline) {
+      wasSyncingRef.current = false;
+      if (pendingCount === 0) {
+        refetch();
+      }
+    }
+  }, [isOnline, isSyncing, pendingCount, refetch]);
+
+  const openSyncStatus = () => {
+    setSyncStatusVisible(true);
+    if (isOnline && pendingCount > 0 && !isSyncing) {
+      syncNow();
+    }
+  };
 
   const handleAccept = async (taskId: string) => {
     try {
@@ -192,35 +219,6 @@ export default function DriverDashboardScreen() {
 
   return (
     <View style={styles.container}>
-      {/* Offline & Sync Banners */}
-      {!isOnline && (
-        <View style={styles.offlineBanner}>
-          <View style={styles.offlineBannerLeft}>
-            <Text style={styles.offlineIcon}>⚡</Text>
-            <Text style={styles.offlineText}>Offline Mode — Working Locally</Text>
-          </View>
-          {pendingCount > 0 && (
-            <View style={styles.pendingBadge}>
-              <Text style={styles.pendingBadgeText}>{pendingCount} pending sync</Text>
-            </View>
-          )}
-        </View>
-      )}
-
-      {isOnline && pendingCount > 0 && (
-        <TouchableOpacity style={styles.syncBanner} onPress={() => syncNow()} disabled={isSyncing}>
-          <View style={styles.offlineBannerLeft}>
-            <Text style={styles.syncIcon}>{isSyncing ? '🔄' : '📶'}</Text>
-            <Text style={styles.syncText}>
-              {isSyncing ? 'Syncing updates...' : `${pendingCount} offline action(s) ready`}
-            </Text>
-          </View>
-          {!isSyncing && (
-            <Text style={styles.syncActionText}>Sync Now</Text>
-          )}
-        </TouchableOpacity>
-      )}
-
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerTop}>
@@ -234,22 +232,19 @@ export default function DriverDashboardScreen() {
             {/* Cloud Sync Status Icon */}
             <TouchableOpacity 
               style={[styles.notifBtn, !isOnline && { backgroundColor: COLORS.WARNING + '15' }]} 
-              onPress={() => {
-                if (isOnline && pendingCount > 0) {
-                  syncNow();
-                } else {
-                  Alert.alert(
-                    'Cloud Sync Status',
-                    isOnline 
-                      ? `You are ONLINE. ${pendingCount > 0 ? `${pendingCount} action(s) pending sync.` : 'All actions are perfectly synced with the server!'}`
-                      : `You are OFFLINE. ${pendingCount > 0 ? `${pendingCount} action(s) saved locally, waiting for internet connection to sync.` : 'Working in Offline Mode. No pending updates.'}`
-                  );
-                }
-              }}
+              onPress={openSyncStatus}
             >
-              <Text style={styles.notifBtnText}>
-                {isOnline ? (pendingCount > 0 ? '🔄' : '☁️') : '⚡'}
-              </Text>
+              <Ionicons
+                name={
+                  !isOnline
+                    ? 'cloud-offline-outline'
+                    : isSyncing || pendingCount > 0
+                      ? 'refresh-outline'
+                      : 'cloud-done-outline'
+                }
+                size={18}
+                color={COLORS.WHITE}
+              />
               {pendingCount > 0 && (
                 <View style={[styles.notifBadge, { backgroundColor: isOnline ? COLORS.PRIMARY : COLORS.WARNING }]}>
                   <Text style={styles.notifBadgeText}>{pendingCount}</Text>
@@ -279,6 +274,26 @@ export default function DriverDashboardScreen() {
           </View>
         </View>
         <View style={{ width: 40, height: 3, backgroundColor: COLORS.ACCENT, borderRadius: 2, marginTop: SPACING.SM }} />
+
+        {/* Offline/Online text under the red header */}
+        <TouchableOpacity style={styles.headerStatusRow} activeOpacity={0.85} onPress={openSyncStatus}>
+          <View style={[styles.statusPill, !isOnline ? styles.statusPillOffline : styles.statusPillOnline]}>
+            <Ionicons
+              name={!isOnline ? 'flash-outline' : isSyncing ? 'sync-outline' : 'cloud-outline'}
+              size={14}
+              color={!isOnline ? COLORS.WARNING : COLORS.WHITE}
+            />
+            <Text style={[styles.statusPillText, !isOnline ? styles.statusTextOffline : undefined]}>
+              {!isOnline ? 'Offline mode — working locally' : isSyncing ? 'Syncing updates…' : pendingCount > 0 ? 'Online — pending sync' : 'Online — all synced'}
+            </Text>
+          </View>
+
+          {pendingCount > 0 && (
+            <View style={styles.statusCountPill}>
+              <Text style={styles.statusCountText}>{pendingCount} pending</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <FlatList
@@ -553,6 +568,15 @@ export default function DriverDashboardScreen() {
                   <Text style={styles.gridCardLabel}>End Trip</Text>
                 </TouchableOpacity>
               )}
+              {activeTrip2 && nextProofTask && (
+                <TouchableOpacity
+                  style={[styles.gridCard, { borderWidth: 2, borderColor: COLORS.WARNING }]}
+                  onPress={() => router.push(`/driver/proofOfDelivery?taskId=${nextProofTask.taskId}&supervisorId=${nextProofTask.supervisorId || ''}`)}
+                >
+                  <Ionicons name="document-text-outline" size={34} color={COLORS.PRIMARY} />
+                  <Text style={styles.gridCardLabel}>Proof</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity style={styles.gridCard} onPress={() => router.push('/driver/odometer')}>
                 <Image source={require('../../assets/icons/odometer.png')} style={styles.gridImageIcon} />
                 <Text style={styles.gridCardLabel}>Odometer</Text>
@@ -622,6 +646,84 @@ export default function DriverDashboardScreen() {
         }
         contentContainerStyle={styles.listContent}
       />
+
+      {/* Clean cloud sync modal */}
+      <Modal
+        visible={syncStatusVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setSyncStatusVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <View style={styles.modalIconWrap}>
+                <Ionicons
+                  name={
+                    !isOnline
+                      ? 'cloud-offline-outline'
+                      : isSyncing
+                        ? 'sync-outline'
+                        : pendingCount > 0
+                          ? 'cloud-upload-outline'
+                          : 'cloud-done-outline'
+                  }
+                  size={20}
+                  color={COLORS.PRIMARY}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Cloud Sync Status</Text>
+                <Text style={styles.modalSubtitle}>
+                  {!isOnline
+                    ? 'You are offline. Changes are saved locally.'
+                    : isSyncing
+                      ? 'Syncing updates…'
+                      : pendingCount > 0
+                        ? 'Pending offline actions will sync now.'
+                        : 'All actions are synced.'}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setSyncStatusVisible(false)} style={styles.modalCloseBtn} activeOpacity={0.8}>
+                <Ionicons name="close" size={20} color={COLORS.GRAY_700} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalBody}>
+              <View style={styles.modalStatRow}>
+                <Text style={styles.modalStatLabel}>Mode</Text>
+                <Text style={styles.modalStatValue}>{isOnline ? 'Online' : 'Offline'}</Text>
+              </View>
+              <View style={styles.modalStatRow}>
+                <Text style={styles.modalStatLabel}>Pending actions</Text>
+                <Text style={styles.modalStatValue}>{pendingCount}</Text>
+              </View>
+            </View>
+
+            <View style={styles.modalActions}>
+              <TouchableOpacity
+                style={[styles.modalBtn, styles.modalBtnSecondary]}
+                activeOpacity={0.85}
+                onPress={() => setSyncStatusVisible(false)}
+              >
+                <Text style={styles.modalBtnSecondaryText}>OK</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.modalBtn,
+                  styles.modalBtnPrimary,
+                  (!isOnline || pendingCount === 0 || isSyncing) && { opacity: 0.5 },
+                ]}
+                activeOpacity={0.85}
+                disabled={!isOnline || pendingCount === 0 || isSyncing}
+                onPress={() => syncNow()}
+              >
+                <Text style={styles.modalBtnPrimaryText}>{isSyncing ? 'Syncing…' : 'Sync now'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -1003,4 +1105,103 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.PRIMARY,
   },
+
+  headerStatusRow: {
+    marginTop: SPACING.MD,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: SPACING.SM,
+  },
+  statusPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: SPACING.MD,
+    paddingVertical: 8,
+    borderRadius: 999,
+    borderWidth: 1,
+  },
+  statusPillOnline: {
+    backgroundColor: COLORS.WHITE + '15',
+    borderColor: COLORS.WHITE + '25',
+  },
+  statusPillOffline: {
+    backgroundColor: COLORS.WARNING + '15',
+    borderColor: COLORS.WARNING + '35',
+  },
+  statusPillText: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+    color: COLORS.WHITE,
+  },
+  statusTextOffline: { color: COLORS.WARNING },
+  statusCountPill: {
+    paddingHorizontal: SPACING.MD,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: COLORS.WHITE,
+    ...SHADOWS.SM,
+  },
+  statusCountText: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '800',
+    color: COLORS.PRIMARY,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    padding: SPACING.XL,
+    justifyContent: 'center',
+  },
+  modalCard: {
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    padding: SPACING.LG,
+    ...SHADOWS.LG,
+  },
+  modalTopRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.MD },
+  modalIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.PRIMARY + '12',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalTitle: { fontSize: FONT_SIZES.LG, fontWeight: '900', color: COLORS.GRAY_900 },
+  modalSubtitle: { marginTop: 2, fontSize: FONT_SIZES.SM, color: COLORS.GRAY_600 },
+  modalCloseBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: COLORS.GRAY_100,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBody: {
+    marginTop: SPACING.LG,
+    backgroundColor: COLORS.GRAY_50,
+    borderRadius: RADIUS.LG,
+    padding: SPACING.MD,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_100,
+  },
+  modalStatRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
+  modalStatLabel: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_600, fontWeight: '600' },
+  modalStatValue: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_900, fontWeight: '800' },
+  modalActions: { flexDirection: 'row', gap: SPACING.MD, marginTop: SPACING.LG },
+  modalBtn: {
+    flex: 1,
+    paddingVertical: SPACING.MD,
+    borderRadius: 999,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalBtnSecondary: { backgroundColor: COLORS.GRAY_100, borderWidth: 1, borderColor: COLORS.GRAY_200 },
+  modalBtnSecondaryText: { fontSize: FONT_SIZES.MD, fontWeight: '800', color: COLORS.GRAY_800 },
+  modalBtnPrimary: { backgroundColor: COLORS.PRIMARY },
+  modalBtnPrimaryText: { fontSize: FONT_SIZES.MD, fontWeight: '800', color: COLORS.WHITE },
 });

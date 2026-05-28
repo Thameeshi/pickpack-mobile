@@ -1,10 +1,11 @@
 import React, { useState, useRef } from 'react';
 import {
   View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator,
-  Alert, ScrollView, TextInput, PanResponder,
+  Alert, ScrollView, TextInput, PanResponder, Modal,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../src/hooks/useAuth';
 import {
   uploadProofOfDelivery, uploadSignature, uploadDeliveryDocument,
@@ -29,6 +30,7 @@ export default function ProofOfDeliveryScreen() {
   const [document, setDocument] = useState<string | null>(null);
   const [recipientName, setRecipientName] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [offlineSavedVisible, setOfflineSavedVisible] = useState(false);
 
   // Signature drawing state
   const [paths, setPaths] = useState<string[]>([]);
@@ -129,9 +131,7 @@ export default function ProofOfDeliveryScreen() {
           recipientName.trim(),
         );
 
-        Alert.alert('Offline Mode', 'Delivery saved locally! It will sync automatically when you are back online.', [
-          { text: 'OK', onPress: () => router.replace('/driver/dashboard') }
-        ]);
+        setOfflineSavedVisible(true);
         return;
       }
 
@@ -250,30 +250,34 @@ export default function ProofOfDeliveryScreen() {
     }
   };
 
-  const steps = ['📷 Photo', '✍️ Signature', '📄 Document', '✅ Confirm'];
+  const steps = ['Photo', 'Signature', 'Document', 'Confirm'];
 
   return (
     <View style={styles.container}>
-      {/* Offline Banner */}
-      {!isOnline && (
-        <View style={styles.offlineBanner}>
-          <Text style={styles.offlineText}>⚡ Offline Mode — Proof will sync when online</Text>
-        </View>
-      )}
-
       <View style={styles.header}>
         <TouchableOpacity onPress={() => step > 0 ? setStep(step - 1) : router.back()}>
           <Text style={styles.backBtn}>← {step > 0 ? 'Back' : 'Cancel'}</Text>
         </TouchableOpacity>
         <Text style={styles.title}>Proof of Delivery</Text>
         <View style={{ width: 50 }} />
+
+        {!isOnline && (
+          <View style={styles.headerStatusRow}>
+            <View style={styles.statusPillOffline}>
+              <Ionicons name="flash-outline" size={14} color={COLORS.WARNING} />
+              <Text style={styles.statusTextOffline}>Offline mode — will sync when online</Text>
+            </View>
+          </View>
+        )}
       </View>
 
       {/* Step Indicator */}
       <View style={styles.stepRow}>
         {steps.map((s, i) => (
           <View key={i} style={styles.stepItem}>
-            <View style={[styles.stepDot, i <= step && styles.stepDotActive]} />
+            <View style={[styles.stepCircle, i <= step && styles.stepCircleActive]}>
+              <Text style={[styles.stepCircleText, i <= step && styles.stepCircleTextActive]}>{i + 1}</Text>
+            </View>
             <Text style={[styles.stepLabel, i <= step && styles.stepLabelActive]}>{s}</Text>
           </View>
         ))}
@@ -290,7 +294,7 @@ export default function ProofOfDeliveryScreen() {
                 <Image source={{ uri: photo }} style={styles.previewImage} />
                 <View style={styles.btnRow}>
                   <TouchableOpacity style={styles.retakeBtn} onPress={handleTakePhoto}>
-                    <Text style={styles.retakeBtnText}>📷 Retake</Text>
+                    <Text style={styles.retakeBtnText}>Retake</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(1)}>
                     <Text style={styles.nextBtnText}>Next →</Text>
@@ -299,7 +303,7 @@ export default function ProofOfDeliveryScreen() {
               </>
             ) : (
               <TouchableOpacity style={styles.captureBtn} onPress={handleTakePhoto}>
-                <Text style={styles.captureBtnIcon}>📷</Text>
+                <Text style={styles.captureBtnIcon}>Camera</Text>
                 <Text style={styles.captureBtnText}>Take Photo</Text>
               </TouchableOpacity>
             )}
@@ -334,10 +338,11 @@ export default function ProofOfDeliveryScreen() {
                 <Text style={styles.signPlaceholder}>Sign here ✍️</Text>
               )}
             </View>
+            <Text style={styles.signatureHint}>Use your finger to sign inside the box.</Text>
 
             <View style={styles.btnRow}>
               <TouchableOpacity style={styles.clearBtn} onPress={clearSignature}>
-                <Text style={styles.clearBtnText}>🗑️ Clear</Text>
+                <Text style={styles.clearBtnText}>Clear</Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[styles.nextBtn, (paths.length === 0 || !recipientName.trim()) && { opacity: 0.5 }]}
@@ -361,7 +366,7 @@ export default function ProofOfDeliveryScreen() {
                 <Image source={{ uri: document }} style={styles.previewImage} />
                 <View style={styles.btnRow}>
                   <TouchableOpacity style={styles.retakeBtn} onPress={handleTakeDocument}>
-                    <Text style={styles.retakeBtnText}>📷 Retake</Text>
+                    <Text style={styles.retakeBtnText}>Retake</Text>
                   </TouchableOpacity>
                   <TouchableOpacity style={styles.nextBtn} onPress={() => setStep(3)}>
                     <Text style={styles.nextBtnText}>Next →</Text>
@@ -371,7 +376,7 @@ export default function ProofOfDeliveryScreen() {
             ) : (
               <>
                 <TouchableOpacity style={styles.captureBtn} onPress={handleTakeDocument}>
-                  <Text style={styles.captureBtnIcon}>📄</Text>
+                  <Text style={styles.captureBtnIcon}>Document</Text>
                   <Text style={styles.captureBtnText}>Take Document Photo</Text>
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.skipBtn} onPress={() => setStep(3)}>
@@ -389,11 +394,11 @@ export default function ProofOfDeliveryScreen() {
             <Text style={styles.stepDesc}>Review and submit proof of delivery</Text>
 
             <View style={styles.confirmCard}>
-              <ConfirmRow icon="📷" label="Delivery Photo" value={photo ? '✅ Captured' : '❌ Missing'} />
-              <ConfirmRow icon="✍️" label="Signature" value={paths.length > 0 ? '✅ Signed' : '❌ Missing'} />
-              <ConfirmRow icon="👤" label="Recipient" value={recipientName || '❌ Missing'} />
-              <ConfirmRow icon="📄" label="Document" value={document ? '✅ Uploaded' : '⏭️ Skipped'} />
-              <ConfirmRow icon="📍" label="GPS Location" value={location ? '✅ Captured' : '⏳ Loading...'} />
+              <ConfirmRow icon="📷" label="Delivery Photo" value={photo ? 'Captured' : 'Missing'} ok={!!photo} />
+              <ConfirmRow icon="✍️" label="Signature" value={paths.length > 0 ? 'Signed' : 'Missing'} ok={paths.length > 0} />
+              <ConfirmRow icon="👤" label="Recipient" value={recipientName || 'Missing'} ok={!!recipientName} />
+              <ConfirmRow icon="📄" label="Document" value={document ? 'Uploaded' : 'Skipped'} ok={!!document} neutral={!document} />
+              <ConfirmRow icon="📍" label="GPS Location" value={location ? 'Captured' : 'Loading...'} ok={!!location} />
             </View>
 
             <TouchableOpacity
@@ -402,22 +407,83 @@ export default function ProofOfDeliveryScreen() {
               disabled={uploading}
             >
               {uploading ? <ActivityIndicator color={COLORS.WHITE} /> : (
-                <Text style={styles.submitBtnText}>✅ Submit Delivery Proof</Text>
+                <Text style={styles.submitBtnText}>Submit Delivery Proof</Text>
               )}
             </TouchableOpacity>
           </View>
         )}
       </ScrollView>
+
+      {/* Clean offline saved modal */}
+      <Modal
+        visible={offlineSavedVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setOfflineSavedVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalTopRow}>
+              <View style={styles.modalIconWrap}>
+                <Ionicons name="checkmark-circle-outline" size={22} color={COLORS.SUCCESS} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.modalTitle}>Saved offline</Text>
+                <Text style={styles.modalSubtitle}>
+                  Delivery proof was saved locally and will sync automatically when you are back online.
+                </Text>
+              </View>
+            </View>
+
+            <TouchableOpacity
+              style={styles.modalBtnPrimary}
+              activeOpacity={0.85}
+              onPress={() => {
+                setOfflineSavedVisible(false);
+                router.replace('/driver/dashboard');
+              }}
+            >
+              <Text style={styles.modalBtnPrimaryText}>OK</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
-function ConfirmRow({ icon, label, value }: { icon: string; label: string; value: string }) {
+function ConfirmRow({
+  icon,
+  label,
+  value,
+  ok,
+  neutral,
+}: {
+  icon: string;
+  label: string;
+  value: string;
+  ok?: boolean;
+  neutral?: boolean;
+}) {
   return (
     <View style={styles.confirmRow}>
       <Text style={styles.confirmIcon}>{icon}</Text>
       <Text style={styles.confirmLabel}>{label}</Text>
-      <Text style={styles.confirmValue}>{value}</Text>
+      <View
+        style={[
+          styles.confirmStatusPill,
+          ok ? styles.confirmStatusPillOk : neutral ? styles.confirmStatusPillNeutral : styles.confirmStatusPillMissing,
+        ]}
+      >
+        <Text
+          style={[
+            styles.confirmValue,
+            ok ? styles.confirmValueOk : neutral ? styles.confirmValueNeutral : styles.confirmValueMissing,
+          ]}
+        >
+          {value}
+        </Text>
+      </View>
     </View>
   );
 }
@@ -432,13 +498,32 @@ const styles = StyleSheet.create({
   backBtn: { color: COLORS.WHITE, fontSize: FONT_SIZES.MD, fontWeight: '600' },
   title: { fontSize: FONT_SIZES.XL, fontWeight: '700', color: COLORS.WHITE },
   stepRow: {
-    flexDirection: 'row', paddingHorizontal: SPACING.LG, paddingVertical: SPACING.MD,
-    backgroundColor: COLORS.WHITE, borderBottomWidth: 1, borderBottomColor: COLORS.GRAY_100,
+    flexDirection: 'row',
+    paddingHorizontal: SPACING.LG,
+    paddingVertical: SPACING.MD,
+    backgroundColor: COLORS.WHITE,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.GRAY_100,
   },
   stepItem: { flex: 1, alignItems: 'center' },
-  stepDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: COLORS.GRAY_300, marginBottom: 4 },
-  stepDotActive: { backgroundColor: COLORS.PRIMARY },
-  stepLabel: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_400, fontWeight: '500' },
+  stepCircle: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: COLORS.GRAY_100,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+  },
+  stepCircleActive: {
+    backgroundColor: COLORS.PRIMARY + '15',
+    borderColor: COLORS.PRIMARY,
+  },
+  stepCircleText: { fontSize: 11, color: COLORS.GRAY_500, fontWeight: '700' },
+  stepCircleTextActive: { color: COLORS.PRIMARY_DARK },
+  stepLabel: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_400, fontWeight: '600' },
   stepLabelActive: { color: COLORS.PRIMARY, fontWeight: '600' },
   content: { flex: 1 },
   stepContent: { flex: 1, padding: SPACING.XL },
@@ -449,9 +534,9 @@ const styles = StyleSheet.create({
   captureBtn: {
     flex: 1, backgroundColor: COLORS.WHITE, borderWidth: 2, borderColor: COLORS.GRAY_200,
     borderStyle: 'dashed', borderRadius: RADIUS.LG, padding: SPACING.XXL,
-    alignItems: 'center', justifyContent: 'center',
+    alignItems: 'center', justifyContent: 'center', ...SHADOWS.SM,
   },
-  captureBtnIcon: { fontSize: 48, marginBottom: SPACING.SM },
+  captureBtnIcon: { fontSize: FONT_SIZES.MD, marginBottom: SPACING.SM, color: COLORS.GRAY_600, fontWeight: '700' },
   captureBtnText: { fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_600 },
   retakeBtn: {
     flex: 1, paddingVertical: SPACING.LG, borderRadius: RADIUS.LG,
@@ -474,6 +559,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', overflow: 'hidden', ...SHADOWS.SM,
   },
   signPlaceholder: { fontSize: FONT_SIZES.XL, color: COLORS.GRAY_300 },
+  signatureHint: { marginTop: -SPACING.SM, marginBottom: SPACING.MD, fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500 },
   clearBtn: {
     flex: 1, paddingVertical: SPACING.LG, borderRadius: RADIUS.LG,
     alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.GRAY_300,
@@ -485,7 +571,7 @@ const styles = StyleSheet.create({
   skipBtnText: { fontSize: FONT_SIZES.MD, fontWeight: '600', color: COLORS.GRAY_500 },
   confirmCard: {
     backgroundColor: COLORS.WHITE, borderRadius: RADIUS.LG,
-    padding: SPACING.LG, marginBottom: SPACING.XL, ...SHADOWS.SM,
+    padding: SPACING.LG, marginBottom: SPACING.XL, ...SHADOWS.SM, borderWidth: 1, borderColor: COLORS.GRAY_100,
   },
   confirmRow: {
     flexDirection: 'row', alignItems: 'center',
@@ -493,10 +579,17 @@ const styles = StyleSheet.create({
   },
   confirmIcon: { fontSize: 20, marginRight: SPACING.MD },
   confirmLabel: { flex: 1, fontSize: FONT_SIZES.MD, fontWeight: '500', color: COLORS.GRAY_700 },
-  confirmValue: { fontSize: FONT_SIZES.SM, fontWeight: '600', color: COLORS.GRAY_900 },
+  confirmStatusPill: { borderRadius: 999, paddingHorizontal: SPACING.SM, paddingVertical: 5 },
+  confirmStatusPillOk: { backgroundColor: COLORS.SUCCESS + '18' },
+  confirmStatusPillMissing: { backgroundColor: COLORS.DANGER + '18' },
+  confirmStatusPillNeutral: { backgroundColor: COLORS.GRAY_100 },
+  confirmValue: { fontSize: FONT_SIZES.SM, fontWeight: '700' },
+  confirmValueOk: { color: COLORS.SUCCESS },
+  confirmValueMissing: { color: COLORS.DANGER },
+  confirmValueNeutral: { color: COLORS.GRAY_600 },
   submitBtn: {
     backgroundColor: COLORS.SUCCESS, paddingVertical: SPACING.LG,
-    borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL, ...SHADOWS.MD,
+    borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL, ...SHADOWS.MD, borderWidth: 1, borderColor: '#0B9A6D',
   },
   submitBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
 
@@ -514,4 +607,58 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: COLORS.DANGER,
   },
+
+  headerStatusRow: {
+    marginTop: SPACING.SM,
+    paddingHorizontal: SPACING.XL,
+    width: '100%',
+  },
+  statusPillOffline: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+    paddingHorizontal: SPACING.MD,
+    borderRadius: 999,
+    backgroundColor: COLORS.WARNING + '15',
+    borderWidth: 1,
+    borderColor: COLORS.WARNING + '35',
+  },
+  statusTextOffline: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+    color: COLORS.WARNING,
+    flex: 1,
+  },
+
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    padding: SPACING.XL,
+    justifyContent: 'center',
+  },
+  modalCard: {
+    backgroundColor: COLORS.WHITE,
+    borderRadius: RADIUS.XL,
+    padding: SPACING.LG,
+    ...SHADOWS.LG,
+  },
+  modalTopRow: { flexDirection: 'row', alignItems: 'center', gap: SPACING.MD, marginBottom: SPACING.LG },
+  modalIconWrap: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: COLORS.SUCCESS + '12',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalTitle: { fontSize: FONT_SIZES.LG, fontWeight: '900', color: COLORS.GRAY_900 },
+  modalSubtitle: { marginTop: 2, fontSize: FONT_SIZES.SM, color: COLORS.GRAY_600 },
+  modalBtnPrimary: {
+    paddingVertical: SPACING.MD,
+    borderRadius: 999,
+    backgroundColor: COLORS.PRIMARY,
+    alignItems: 'center',
+  },
+  modalBtnPrimaryText: { fontSize: FONT_SIZES.MD, fontWeight: '800', color: COLORS.WHITE },
 });

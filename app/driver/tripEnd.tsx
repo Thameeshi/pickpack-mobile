@@ -28,6 +28,35 @@ export default function TripEndScreen() {
   const [tripSummary, setTripSummary] = useState<TripSession | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingTasks, setPendingTasks] = useState<Task[]>([]);
+  const [checkingRequirements, setCheckingRequirements] = useState(false);
+
+  const getTripTasks = async (trip: TripSession): Promise<Task[]> => {
+    const ids = (trip.taskIds || []).filter(Boolean);
+    if (ids.length === 0) return [];
+    const tasks = await Promise.all(ids.map((id: string) => offlineGetTaskById(id)));
+    return tasks.filter((t): t is Task => !!t);
+  };
+
+  const getMissingRequirements = (tasks: Task[]) => {
+    const missing: { taskId: string; title: string; missing: string[]; supervisorId?: string }[] = [];
+    for (const t of tasks) {
+      const taskId = t.id || '';
+      const miss: string[] = [];
+      if (t.status !== 'delivered') miss.push('Delivery not completed');
+      if (!t.proofOfDeliveryUrl) miss.push('Delivery photo');
+      if (!t.signatureUrl) miss.push('Signature');
+      if (!t.deliveryDocumentUrl) miss.push('Document');
+      if (miss.length > 0) {
+        missing.push({
+          taskId,
+          title: `${t.pickupLocation} → ${t.deliveryLocation}`,
+          missing: miss,
+          supervisorId: t.supervisorId,
+        });
+      }
+    }
+    return missing;
+  };
 
   useEffect(() => {
     (async () => {
@@ -55,6 +84,45 @@ export default function TripEndScreen() {
   };
 
   const handleEndTrip = async () => {
+    if (!activeTrip?.id) {
+      Alert.alert('No Active Trip', 'There is no active trip to end.');
+      return;
+    }
+
+    // Block ending a trip unless all deliveries have required proof uploaded
+    setCheckingRequirements(true);
+    try {
+      const tasks = await getTripTasks(activeTrip);
+      const missing = getMissingRequirements(tasks);
+      if (missing.length > 0) {
+        const first = missing[0];
+        Alert.alert(
+          'Complete delivery proof first',
+          `You can end the trip only after completing:\n\n• Delivery photo\n• Signature\n• Document\n\nMissing for ${missing.length} task(s).`,
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Go to Proof',
+              onPress: () => {
+                if (first.taskId) {
+                  router.replace(`/driver/proofOfDelivery?taskId=${first.taskId}&supervisorId=${first.supervisorId || ''}`);
+                } else {
+                  router.replace('/driver/dashboard');
+                }
+              },
+            },
+          ],
+        );
+        return;
+      }
+    } catch (e) {
+      console.log('Trip requirement check failed:', e);
+      Alert.alert('Error', 'Unable to verify trip requirements. Please try again.');
+      return;
+    } finally {
+      setCheckingRequirements(false);
+    }
+
     if (!odometer || isNaN(Number(odometer))) {
       Alert.alert('⚠️ Required', 'Please enter your ending odometer reading');
       return;
@@ -355,11 +423,11 @@ export default function TripEndScreen() {
 
         {/* End Button */}
         <TouchableOpacity
-          style={[styles.endBtn, loading && { opacity: 0.6 }]}
+          style={[styles.endBtn, (loading || checkingRequirements) && { opacity: 0.6 }]}
           onPress={handleEndTrip}
-          disabled={loading}
+          disabled={loading || checkingRequirements}
         >
-          {loading ? (
+          {loading || checkingRequirements ? (
             <ActivityIndicator color={COLORS.WHITE} />
           ) : (
             <>

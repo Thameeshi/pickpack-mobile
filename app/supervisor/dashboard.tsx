@@ -168,7 +168,7 @@ export default function SupervisorDashboardScreen() {
 
   // Quick Action Buttons
   const ACTIONS = [
-    { id: 'new', label: 'Assign Trip', image: require('../../assets/icons/new-trip.png'), route: '/supervisor/assignTask' },
+    { id: 'new', label: 'Assign Trip', image: require('../../assets/icons/assign-trip-truck.png'), route: '/supervisor/assignTask' },
     { id: 'track', label: 'Track', image: require('../../assets/icons/track.png'), route: '/supervisor/driverTracking' },
     { id: 'add-driver', label: 'Add Driver', image: require('../../assets/icons/driver.png'), route: '/supervisor/addDriver' },
     { id: 'fuel', label: 'Fuel', image: require('../../assets/icons/fuel.png'), route: '/supervisor/fuelApprovals' },

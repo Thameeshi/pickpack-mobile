@@ -86,6 +86,41 @@ export default function OperationsOverviewScreen() {
     ? completedTrips.reduce((sum, trip) => sum + (trip.totalFuelLitres || 0), 0) / completedTrips.length
     : 0;
 
+  const topMetrics = [
+    {
+      key: 'scheduled',
+      value: `${todaysScheduledDeliveries.length}`,
+      label: 'Scheduled today',
+      meta: `${deliveredTasks.length} completed`,
+      color: '#2563EB',
+      bg: '#EFF6FF',
+    },
+    {
+      key: 'completion',
+      value: `${Math.round(completionRate * 100)}%`,
+      label: 'Completion rate',
+      meta: 'all tasks',
+      color: '#7C3AED',
+      bg: '#F5F3FF',
+    },
+    {
+      key: 'ontime',
+      value: `${Math.round(onTimeRate * 100)}%`,
+      label: 'On-time delivery',
+      meta: '6h assigned-to-complete',
+      color: '#059669',
+      bg: '#ECFDF5',
+    },
+    {
+      key: 'issues',
+      value: `${issueCount}`,
+      label: 'Issues / incidents',
+      meta: `${pendingRepairs.length} repairs pending`,
+      color: '#DC2626',
+      bg: '#FEF2F2',
+    },
+  ];
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -112,30 +147,20 @@ export default function OperationsOverviewScreen() {
             </Text>
 
             <View style={styles.opsGrid}>
-              <View style={styles.opsCard}>
-                <Text style={styles.opsValue}>{todaysScheduledDeliveries.length}</Text>
-                <Text style={styles.opsLabel}>Scheduled today</Text>
-                <Text style={styles.opsMeta}>{deliveredTasks.length} completed</Text>
-              </View>
-              <View style={styles.opsCard}>
-                <Text style={styles.opsValue}>{Math.round(completionRate * 100)}%</Text>
-                <Text style={styles.opsLabel}>Completion rate</Text>
-                <Text style={styles.opsMeta}>all tasks</Text>
-              </View>
-              <View style={styles.opsCard}>
-                <Text style={styles.opsValue}>{Math.round(onTimeRate * 100)}%</Text>
-                <Text style={styles.opsLabel}>On-time delivery</Text>
-                <Text style={styles.opsMeta}>6h assigned-to-complete</Text>
-              </View>
-              <View style={styles.opsCard}>
-                <Text style={styles.opsValue}>{issueCount}</Text>
-                <Text style={styles.opsLabel}>Issues / incidents</Text>
-                <Text style={styles.opsMeta}>{pendingRepairs.length} repairs pending</Text>
-              </View>
+              {topMetrics.map(m => (
+                <View key={m.key} style={[styles.opsCard, { backgroundColor: m.bg, borderColor: m.color + '30' }]}>
+                  <Text style={[styles.opsValue, { color: m.color }]}>{m.value}</Text>
+                  <Text style={styles.opsLabel}>{m.label}</Text>
+                  <Text style={styles.opsMeta}>{m.meta}</Text>
+                </View>
+              ))}
             </View>
 
             <View style={styles.opsPanel}>
-              <Text style={styles.opsPanelTitle}>Route status overview</Text>
+              <View style={styles.panelHeader}>
+                <Text style={styles.panelEmoji}>🧭</Text>
+                <Text style={styles.opsPanelTitle}>Route status overview</Text>
+              </View>
               {routeStatusCounts.map(status => {
                 const count = allTasks.filter(t => t.status === status).length;
                 const widthPct = allTasks.length ? (count / allTasks.length) * 100 : 0;
@@ -167,7 +192,10 @@ export default function OperationsOverviewScreen() {
             </View>
 
             <View style={styles.opsPanel}>
-              <Text style={styles.opsPanelTitle}>Order allocation</Text>
+              <View style={styles.panelHeader}>
+                <Text style={styles.panelEmoji}>👥</Text>
+                <Text style={styles.opsPanelTitle}>Order allocation</Text>
+              </View>
               {driverLoads.slice(0, 4).map(driver => {
                 const maxLoad = Math.max(1, driverLoads[0]?.assigned || 1);
                 return (
@@ -196,22 +224,22 @@ export default function OperationsOverviewScreen() {
             </View>
 
             <View style={styles.opsGrid}>
-              <View style={styles.opsCard}>
+              <View style={[styles.opsCard, { backgroundColor: '#F0F9FF', borderColor: '#7DD3FC55' }]}>
                 <Text style={styles.opsValue}>{Math.round(completionRate * 100)}%</Text>
                 <Text style={styles.opsLabel}>Delivery completion</Text>
                 <Text style={styles.opsMeta}>current snapshot</Text>
               </View>
-              <View style={styles.opsCard}>
+              <View style={[styles.opsCard, { backgroundColor: '#ECFDF5', borderColor: '#34D39955' }]}>
                 <Text style={styles.opsValue}>{Math.round(onTimeRate * 100)}%</Text>
                 <Text style={styles.opsLabel}>On-time delivery</Text>
                 <Text style={styles.opsMeta}>current snapshot</Text>
               </View>
-              <View style={styles.opsCard}>
+              <View style={[styles.opsCard, { backgroundColor: '#FFF7ED', borderColor: '#FDBA7455' }]}>
                 <Text style={styles.opsValue}>N/A</Text>
                 <Text style={styles.opsLabel}>Customer satisfaction</Text>
                 <Text style={styles.opsMeta}>feedback not tracked yet</Text>
               </View>
-              <View style={styles.opsCard}>
+              <View style={[styles.opsCard, { backgroundColor: '#F5F3FF', borderColor: '#C4B5FD55' }]}>
                 <Text style={styles.opsValue}>{completedTrips.length ? `${fuelEfficiencyPerRoute.toFixed(1)}L` : '—'}</Text>
                 <Text style={styles.opsLabel}>Fuel / route</Text>
                 <Text style={styles.opsMeta}>per completed route</Text>
@@ -303,6 +331,15 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.GRAY_900,
     marginBottom: SPACING.SM,
+  },
+  panelHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: SPACING.SM,
+    marginBottom: SPACING.SM,
+  },
+  panelEmoji: {
+    fontSize: 18,
   },
   routeRowMetric: { marginBottom: SPACING.SM },
   routeRowTop: {
