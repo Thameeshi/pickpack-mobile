@@ -8,6 +8,8 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { getAllRepairRequests, updateRepairStatus } from '../../src/services/repairService';
 import { RepairRequest, REPAIR_TYPE_LABELS } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../src/services/firebase';
 
 const REPAIR_ICONS: Record<string, string> = {
   tyre_puncture: '🛞',
@@ -40,8 +42,19 @@ export default function RepairApprovalsScreen() {
 
   const loadRepairs = async () => {
     try {
+      if (!user?.uid) return;
+
+      const driversQuery = query(
+        collection(db, 'users'),
+        where('role', '==', 'driver'),
+        where('supervisorId', '==', user.uid)
+      );
+      const driversSnap = await getDocs(driversQuery);
+      const myDriverIds = driversSnap.docs.map(doc => doc.id);
+
       const data = await getAllRepairRequests();
-      setRepairs(data);
+      const filtered = data.filter(r => myDriverIds.includes(r.driverId));
+      setRepairs(filtered);
     } catch (e) {
       console.error(e);
     } finally {

@@ -4,19 +4,22 @@ import {
   ActivityIndicator, RefreshControl
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { getAllTasks } from '../../src/services/taskService';
+import { useAuth } from '../../src/hooks/useAuth';
+import { getTasksBySupervisor } from '../../src/services/taskService';
 import { Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function TripDetailsScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const loadTasks = async () => {
     try {
-      const data = await getAllTasks();
+      if (!user?.uid) return;
+      const data = await getTasksBySupervisor(user.uid);
       const recentTasks = data.filter(t => ['pending', 'assigned', 'accepted', 'rejected'].includes(t.status));
       setTasks(recentTasks);
     } catch (e) {

@@ -8,6 +8,8 @@ import { getAllFuelExpenses, updateFuelExpenseStatus } from '../../src/services/
 import { FuelExpense } from '../../src/types';
 import { formatDate, formatCurrency } from '../../src/utils/helpers';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
+import { collection, query, where, getDocs } from 'firebase/firestore';
+import { db } from '../../src/services/firebase';
 
 export default function FuelApprovalsScreen() {
   const router = useRouter();
@@ -17,8 +19,19 @@ export default function FuelApprovalsScreen() {
 
   const loadExpenses = async () => {
     try {
+      if (!user?.uid) return;
+
+      const driversQuery = query(
+        collection(db, 'users'),
+        where('role', '==', 'driver'),
+        where('supervisorId', '==', user.uid)
+      );
+      const driversSnap = await getDocs(driversQuery);
+      const myDriverIds = driversSnap.docs.map(doc => doc.id);
+
       const data = await getAllFuelExpenses();
-      setExpenses(data);
+      const filtered = data.filter(e => myDriverIds.includes(e.driverId));
+      setExpenses(filtered);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   };
