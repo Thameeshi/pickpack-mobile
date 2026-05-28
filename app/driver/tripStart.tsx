@@ -6,17 +6,20 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
-import { startTrip, linkAcceptedTasksToTrip } from '../../src/services/tripService';
+import { offlineStartTrip, offlineLinkAcceptedTasksToTrip } from '../../src/services/tripService';
 import { getTasksByDriver } from '../../src/services/taskService';
-import { addOdometerReading, uploadOdometerPhoto } from '../../src/services/fuelService';
+import { getCachedTasks } from '../../src/services/offlineService';
+import { offlineAddOdometerReading, offlineUploadOdometerPhoto } from '../../src/services/fuelService';
 import { getCurrentLocation } from '../../src/services/locationService';
 import { startTrackingDriverLocation } from '../../src/services/locationService';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function TripStartScreen() {
   const router = useRouter();
   const { user, profile } = useAuth();
+  const { isOnline, pendingCount, isSyncing, syncNow } = useOfflineSync();
   const [odometer, setOdometer] = useState('');
   const [loading, setLoading] = useState(false);
   const [loadingTasks, setLoadingTasks] = useState(true);
@@ -32,7 +35,17 @@ export default function TripStartScreen() {
     if (!user?.uid) return;
     (async () => {
       try {
-        const allTasks = await getTasksByDriver(user.uid);
+        const NetInfo = require('@react-native-community/netinfo').default;
+        const state = await NetInfo.fetch();
+        const online = !!(state.isConnected && state.isInternetReachable !== false);
+
+        let allTasks = [];
+        if (online) {
+          allTasks = await getTasksByDriver(user.uid);
+        } else {
+          allTasks = await getCachedTasks();
+        }
+
         const active = allTasks.filter(
           t => t.status === 'accepted' || t.status === 'assigned' || t.status === 'in_progress'
         );
@@ -65,7 +78,7 @@ export default function TripStartScreen() {
 
   const handleStartTrip = async () => {
     if (!odometer || isNaN(Number(odometer))) {
-      Alert.alert(' Required', 'Please enter your current odometer reading');
+      Alert.alert('Required', 'Please enter your current odometer reading');
       return;
     }
     if (!photo) {
@@ -86,15 +99,18 @@ export default function TripStartScreen() {
       const startLocation = firstTask?.pickupLocation || '';
       const endLocation = firstTask?.deliveryLocation || '';
 
-      const tripId = await startTrip(
+      const tripId = await offlineStartTrip(
         user!.uid,
         profile?.name || '',
         Number(odometer),
         startLocation,
         endLocation,
+        [],
+        photo,
+        loc,
       );
 
-      const readingId = await addOdometerReading({
+      const readingId = await offlineAddOdometerReading({
         driverId: user!.uid,
         driverName: profile?.name || '',
         reading: Number(odometer),
@@ -106,11 +122,11 @@ export default function TripStartScreen() {
       });
 
       if (photo) {
-        try { await uploadOdometerPhoto(readingId, photo); } catch { }
+        try { await offlineUploadOdometerPhoto(readingId, photo); } catch { }
       }
 
       try {
-        const linkedIds = await linkAcceptedTasksToTrip(user!.uid, tripId);
+        const linkedIds = await offlineLinkAcceptedTasksToTrip(user!.uid, tripId);
         setLinkedTaskCount(linkedIds.length);
       } catch { }
 
@@ -135,7 +151,39 @@ export default function TripStartScreen() {
           <Image source={require('../../assets/icons/new-trip.png')} style={styles.headerIcon} />
           <Text style={styles.title}>New Trip Request</Text>
         </View>
-        <View style={{ width: 40 }} />
+        <TouchableOpacity
+          style={{
+            width: 40, height: 40, borderRadius: 20,
+            justifyContent: 'center', alignItems: 'center',
+            backgroundColor: !isOnline ? COLORS.WARNING + '15' : 'rgba(93,17,21,0.08)',
+          }}
+          onPress={() => {
+            if (isOnline && pendingCount > 0) {
+              syncNow();
+            } else {
+              Alert.alert(
+                'Cloud Sync Status',
+                isOnline 
+                  ? `You are ONLINE. ${pendingCount > 0 ? `${pendingCount} action(s) pending sync.` : 'All actions are perfectly synced with the server!'}`
+                  : `You are OFFLINE. ${pendingCount > 0 ? `${pendingCount} action(s) saved locally, waiting for internet connection to sync.` : 'Working in Offline Mode. No pending updates.'}`
+              );
+            }
+          }}
+        >
+          <Text style={{ fontSize: 18, color: '#5D1115' }}>
+            {isOnline ? (pendingCount > 0 ? '🔄' : '☁️') : '⚡'}
+          </Text>
+          {pendingCount > 0 && (
+            <View style={{
+              position: 'absolute', top: -4, right: -4,
+              backgroundColor: isOnline ? COLORS.PRIMARY : COLORS.WARNING,
+              borderRadius: 8, minWidth: 16, height: 16,
+              justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+            }}>
+              <Text style={{ fontSize: 10, fontWeight: 'bold', color: COLORS.WHITE }}>{pendingCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView

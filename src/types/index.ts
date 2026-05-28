@@ -71,6 +71,7 @@ export interface Task {
   qrCode?: string;
   routeId?: string;
   tripId?: string;
+  invoiceId?: string;
   offlineSynced?: boolean;
   scannedAt?: number;
   odometerAtDelivery?: number;
@@ -111,6 +112,40 @@ export interface TaskCreatePayload {
   itemCount?: number;
   estimatedDeliveryTime?: string;
   middleLocations?: string[];
+}
+
+// ===== INVOICE TYPES =====
+export type InvoiceStatus = 'draft' | 'issued' | 'paid' | 'overdue';
+
+export interface InvoiceItem {
+  description: string;
+  quantity: number;
+  unitPrice: number;
+  amount: number;
+}
+
+export interface InvoiceRecord {
+  id?: string;
+  taskId: string;
+  tripId?: string;
+  driverId: string;
+  driverName: string;
+  supervisorId: string;
+  supervisorName?: string;
+  recipientName: string;
+  recipientPhone?: string;
+  routeLabel?: string;
+  items: InvoiceItem[];
+  subtotal: number;
+  taxRate: number;
+  taxAmount: number;
+  total: number;
+  status: InvoiceStatus;
+  dueAt?: number;
+  generatedBy: string;
+  generatedByRole: UserRole;
+  createdAt: number;
+  updatedAt: number;
 }
 
 // ===== TRIP SESSION TYPES =====
@@ -344,7 +379,29 @@ export interface AppNotification {
 }
 
 // ===== OFFLINE QUEUE =====
+export type OfflineActionType =
+  | 'accept_task'
+  | 'reject_task'
+  | 'update_status'
+  | 'complete_task'
+  | 'start_trip'
+  | 'end_trip'
+  | 'add_odometer_reading';
+
 export interface OfflineQueueItem {
+  id: string;
+  action: OfflineActionType;
+  taskId: string;
+  payload: Record<string, unknown>;
+  createdAt: number;
+  synced: boolean;
+  retryCount: number;
+  maxRetries: number;
+  lastError?: string;
+}
+
+// Legacy compat alias
+export interface OfflineQueueItemLegacy {
   id: string;
   collection: string;
   docId?: string;

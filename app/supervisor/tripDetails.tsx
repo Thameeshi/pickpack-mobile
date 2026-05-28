@@ -62,10 +62,22 @@ export default function TripDetailsScreen() {
     <View style={styles.recentCard}>
       <View style={styles.recentHeader}>
         <Text style={styles.recentDriver}>🚚 {t.assignedDriverName || 'Unassigned'}</Text>
-        <View style={[styles.badge, getStatusStyle(t.status)]}>
-          <Text style={[styles.badgeText, getStatusTextStyle(t.status)]}>
-            {getStatusText(t.status)}
-          </Text>
+        <View style={styles.recentHeaderRight}>
+          <View style={[styles.badge, getStatusStyle(t.status)]}>
+            <Text style={[styles.badgeText, getStatusTextStyle(t.status)]}>
+              {getStatusText(t.status)}
+            </Text>
+          </View>
+          {!!t.id && (
+            <TouchableOpacity
+              style={styles.deleteBtn}
+              activeOpacity={0.8}
+              onPress={() => router.push({ pathname: '/supervisor/deleteTaskConfirm', params: { taskId: t.id } })}
+              accessibilityLabel="Delete assignment history item"
+            >
+              <Text style={styles.deleteBtnText}>🗑️</Text>
+            </TouchableOpacity>
+          )}
         </View>
       </View>
       <Text style={styles.recentRoute} numberOfLines={1}>{t.pickupLocation} → {t.deliveryLocation}</Text>
@@ -131,8 +143,18 @@ const styles = StyleSheet.create({
   },
   recentHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: SPACING.XS },
   recentDriver: { fontSize: FONT_SIZES.MD, fontWeight: '700', color: COLORS.GRAY_900 },
+  recentHeaderRight: { flexDirection: 'row', alignItems: 'center', gap: SPACING.SM },
   badge: { paddingHorizontal: SPACING.SM, paddingVertical: 4, borderRadius: RADIUS.SM },
   badgeText: { fontSize: 10, fontWeight: '700', textTransform: 'uppercase' },
+  deleteBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: COLORS.GRAY_100,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  deleteBtnText: { fontSize: 16 },
   recentRoute: { fontSize: FONT_SIZES.SM, color: COLORS.GRAY_700, marginBottom: SPACING.XS },
   recentTime: { fontSize: FONT_SIZES.XS, color: COLORS.GRAY_500 },
   emptyTextCenter: { textAlign: 'center', color: COLORS.GRAY_500, marginVertical: SPACING.LG },

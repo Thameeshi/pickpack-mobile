@@ -8,8 +8,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { useAuth } from '../../src/hooks/useAuth';
 import {
   uploadProofOfDelivery, uploadSignature, uploadDeliveryDocument,
-  completeTask, getTaskById,
+  completeTask, offlineCompleteTask, offlineGetTaskById,
 } from '../../src/services/taskService';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { addTaskToTrip, getActiveTrip } from '../../src/services/tripService';
 import { notifyDeliveryCompleted } from '../../src/services/notificationService';
 import { useLocation } from '../../src/hooks/useLocation';
@@ -22,6 +23,7 @@ export default function ProofOfDeliveryScreen() {
   const { taskId, supervisorId } = useLocalSearchParams<{ taskId: string; supervisorId?: string }>();
   const { user, profile } = useAuth();
   const { location } = useLocation();
+  const { isOnline } = useOfflineSync();
   const [step, setStep] = useState(0); // 0=photo, 1=signature, 2=document, 3=confirm
   const [photo, setPhoto] = useState<string | null>(null);
   const [document, setDocument] = useState<string | null>(null);
@@ -95,11 +97,45 @@ export default function ProofOfDeliveryScreen() {
   const handleSubmit = async () => {
     if (!photo) { Alert.alert('Required', 'Take a delivery photo'); return; }
     if (paths.length === 0) { Alert.alert('Required', 'Get recipient signature'); return; }
-    // Location is nice-to-have but not required (emulators may not have GPS)
     if (!recipientName.trim()) { Alert.alert('Required', 'Enter recipient name'); return; }
 
     setUploading(true);
     try {
+      // Capture signature URI first
+      let signatureUri = '';
+      if (signatureRef.current) {
+        try {
+          signatureUri = await captureRef(signatureRef.current, {
+            format: 'png', quality: 0.9,
+          });
+        } catch (e: any) {
+          Alert.alert('Error', 'Failed to capture signature image. Please try again.');
+          setUploading(false);
+          return;
+        }
+      }
+
+      // Check if we are online or offline
+      if (!isOnline) {
+        // --- OFFLINE WORKFLOW ---
+        // Complete the task offline: passes local file paths, which the sync engine will upload later.
+        await offlineCompleteTask(
+          taskId!,
+          photo, // local image URI
+          location?.coords?.latitude || 0,
+          location?.coords?.longitude || 0,
+          signatureUri, // local signature URI
+          document || undefined, // local doc URI (optional)
+          recipientName.trim(),
+        );
+
+        Alert.alert('Offline Mode', 'Delivery saved locally! It will sync automatically when you are back online.', [
+          { text: 'OK', onPress: () => router.replace('/driver/dashboard') }
+        ]);
+        return;
+      }
+
+      // --- ONLINE WORKFLOW ---
       // 1. Upload delivery photo (REQUIRED — block completion if fails)
       let proofUrl = '';
       try {
@@ -110,16 +146,13 @@ export default function ProofOfDeliveryScreen() {
         console.error('❌ Photo upload failed:', msg);
         Alert.alert('Upload Error (Photo)', msg + '\n\nPlease check your connection and try again.');
         setUploading(false);
-        return; // BLOCK — don't proceed without valid photo URL
+        return; // BLOCK
       }
 
-      // 2. Capture and upload signature (REQUIRED — block completion if fails)
-      let signatureUrl: string | undefined;
-      if (signatureRef.current) {
+      // 2. Upload signature (REQUIRED — block completion if fails)
+      let signatureUrl = '';
+      if (signatureUri) {
         try {
-          const signatureUri = await captureRef(signatureRef.current, {
-            format: 'png', quality: 0.9,
-          });
           signatureUrl = await uploadSignature(taskId!, signatureUri);
           console.log('✅ Signature uploaded:', signatureUrl);
         } catch (e: any) {
@@ -127,7 +160,7 @@ export default function ProofOfDeliveryScreen() {
           console.error('❌ Signature upload failed:', msg);
           Alert.alert('Upload Error (Signature)', msg + '\n\nPlease try again.');
           setUploading(false);
-          return; // BLOCK — don't proceed without valid signature URL
+          return; // BLOCK
         }
       }
 
@@ -139,15 +172,14 @@ export default function ProofOfDeliveryScreen() {
           console.log('✅ Document uploaded:', documentUrl);
         } catch (e: any) {
           console.error('❌ Document upload failed:', e?.message);
-          // Document is optional — warn but don't block
           Alert.alert('Document Upload Warning', 'Document could not be uploaded, but delivery can proceed.');
         }
       }
 
-      // 4. Complete the task with VALID URLs (photo and signature are guaranteed to exist)
+      // 4. Complete the task
       await completeTask(
         taskId!,
-        proofUrl, // Now guaranteed to be a valid URL, never 'upload_failed'
+        proofUrl,
         location?.coords?.latitude || 0,
         location?.coords?.longitude || 0,
         signatureUrl,
@@ -182,7 +214,7 @@ export default function ProofOfDeliveryScreen() {
         if (trip?.taskIds && trip.taskIds.length > 0) {
           for (const tid of trip.taskIds) {
             if (tid === taskId) continue; // skip the one we just completed
-            const t = await getTaskById(tid);
+            const t = await offlineGetTaskById(tid);
             if (t && t.status !== 'delivered' && t.status !== 'failed') {
               pendingCount++;
               if (!nextPendingTask) {
@@ -222,6 +254,13 @@ export default function ProofOfDeliveryScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Offline Banner */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineText}>⚡ Offline Mode — Proof will sync when online</Text>
+        </View>
+      )}
+
       <View style={styles.header}>
         <TouchableOpacity onPress={() => step > 0 ? setStep(step - 1) : router.back()}>
           <Text style={styles.backBtn}>← {step > 0 ? 'Back' : 'Cancel'}</Text>
@@ -460,4 +499,19 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.LG, alignItems: 'center', marginBottom: SPACING.XXXL, ...SHADOWS.MD,
   },
   submitBtnText: { color: COLORS.WHITE, fontSize: FONT_SIZES.LG, fontWeight: '700' },
+
+  // Offline banner styles
+  offlineBanner: {
+    backgroundColor: COLORS.DANGER + '15',
+    paddingVertical: SPACING.SM,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.DANGER + '30',
+  },
+  offlineText: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+    color: COLORS.DANGER,
+  },
 });

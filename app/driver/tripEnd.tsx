@@ -8,16 +8,18 @@ import * as ImagePicker from 'expo-image-picker';
 import { doc, setDoc } from 'firebase/firestore';
 import { db } from '../../src/services/firebase';
 import { useAuth } from '../../src/hooks/useAuth';
-import { endTrip, getActiveTrip } from '../../src/services/tripService';
-import { getTaskById } from '../../src/services/taskService';
-import { addOdometerReading, uploadOdometerPhoto } from '../../src/services/fuelService';
+import { offlineEndTrip, offlineGetActiveTrip } from '../../src/services/tripService';
+import { offlineGetTaskById } from '../../src/services/taskService';
+import { offlineAddOdometerReading, offlineUploadOdometerPhoto } from '../../src/services/fuelService';
 import { stopTrackingDriverLocation, getCurrentLocation } from '../../src/services/locationService';
+import { useOfflineSync } from '../../src/hooks/useOfflineSync';
 import { TripSession, Task } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 
 export default function TripEndScreen() {
   const router = useRouter();
   const { user, profile } = useAuth();
+  const { isOnline, pendingCount, isSyncing, syncNow } = useOfflineSync();
   const [activeTrip, setActiveTrip] = useState<TripSession | null>(null);
   const [odometer, setOdometer] = useState('');
   const [photo, setPhoto] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export default function TripEndScreen() {
   useEffect(() => {
     (async () => {
       if (!user?.uid) return;
-      const trip = await getActiveTrip(user.uid);
+      const trip = await offlineGetActiveTrip(user.uid);
       setActiveTrip(trip);
       setLoadingTrip(false);
     })();
@@ -79,7 +81,7 @@ export default function TripEndScreen() {
       } catch {}
 
       // 1. Save odometer reading
-      const readingId = await addOdometerReading({
+      const readingId = await offlineAddOdometerReading({
         driverId: user!.uid,
         driverName: profile?.name || '',
         reading: Number(odometer),
@@ -91,28 +93,30 @@ export default function TripEndScreen() {
       });
 
       if (photo) {
-        try { await uploadOdometerPhoto(readingId, photo); } catch {}
+        try { await offlineUploadOdometerPhoto(readingId, photo); } catch {}
       }
 
       // 2. End the trip
-      const summary = await endTrip(activeTrip!.id!, Number(odometer));
+      const summary = await offlineEndTrip(activeTrip!.id!, Number(odometer), photo, loc);
       setTripSummary(summary);
 
       // 3. Stop GPS tracking
       stopTrackingDriverLocation();
 
       // 4. Mark driver as offline
-      try {
-        await setDoc(
-          doc(db, 'drivers', user!.uid),
-          { isOnline: false },
-          { merge: true }
-        );
-      } catch {}
+      if (isOnline) {
+        try {
+          await setDoc(
+            doc(db, 'drivers', user!.uid),
+            { isOnline: false },
+            { merge: true }
+          );
+        } catch {}
+      }
 
       // 5. Check for pending deliveries that need proof of delivery
       if (summary?.taskIds && summary.taskIds.length > 0) {
-        const taskPromises = summary.taskIds.map((id: string) => getTaskById(id));
+        const taskPromises = summary.taskIds.map((id: string) => offlineGetTaskById(id));
         const tasks = await Promise.all(taskPromises);
         const pending = tasks.filter(
           (t): t is Task => t !== null && t.status !== 'delivered' && t.status !== 'failed'
@@ -255,7 +259,39 @@ export default function TripEndScreen() {
           <Image source={require('../../assets/icons/end-trip.png')} style={{ width: 24, height: 24, tintColor: COLORS.WHITE }} />
           <Text style={styles.title}>End Trip</Text>
         </View>
-        <View style={{ width: 50 }} />
+        <TouchableOpacity
+          style={{
+            width: 40, height: 40, borderRadius: 20,
+            justifyContent: 'center', alignItems: 'center',
+            backgroundColor: !isOnline ? COLORS.WARNING + '15' : 'rgba(255,255,255,0.15)',
+          }}
+          onPress={() => {
+            if (isOnline && pendingCount > 0) {
+              syncNow();
+            } else {
+              Alert.alert(
+                'Cloud Sync Status',
+                isOnline 
+                  ? `You are ONLINE. ${pendingCount > 0 ? `${pendingCount} action(s) pending sync.` : 'All actions are perfectly synced with the server!'}`
+                  : `You are OFFLINE. ${pendingCount > 0 ? `${pendingCount} action(s) saved locally, waiting for internet connection to sync.` : 'Working in Offline Mode. No pending updates.'}`
+              );
+            }
+          }}
+        >
+          <Text style={{ fontSize: 18, color: COLORS.WHITE }}>
+            {isOnline ? (pendingCount > 0 ? '🔄' : '☁️') : '⚡'}
+          </Text>
+          {pendingCount > 0 && (
+            <View style={{
+              position: 'absolute', top: -4, right: -4,
+              backgroundColor: isOnline ? COLORS.PRIMARY : COLORS.WARNING,
+              borderRadius: 8, minWidth: 16, height: 16,
+              justifyContent: 'center', alignItems: 'center', paddingHorizontal: 4,
+            }}>
+              <Text style={{ fontSize: 10, fontWeight: 'bold', color: COLORS.WHITE }}>{pendingCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>

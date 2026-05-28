@@ -1,20 +1,79 @@
 import {
-  collection, addDoc, getDoc, getDocs, updateDoc, deleteDoc,
+  collection, addDoc, getDoc, getDocs, updateDoc, setDoc, deleteDoc,
   doc, query, where,
 } from 'firebase/firestore';
-import { Task, TaskCreatePayload, TaskStatus } from '../types';
+import { InvoiceRecord, Task, TaskCreatePayload, TaskStatus } from '../types';
 import { notifyTaskAssigned } from './notificationService';
 import { isDriverOnTrip } from './tripService';
 import { uploadFileToStorage } from './storageUpload';
 import { db } from './firebase';
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const DEFAULT_BASE_FEE = 1000;
+const DEFAULT_TAX_RATE = 0;
 
 // ─── Generate unique QR code for a task ────────────────────────────
 function generateQRCode(taskId: string): string {
   const short = taskId.slice(0, 8).toUpperCase();
   const ts = Date.now().toString(36).toUpperCase();
   return `PPCK-${short}-${ts}`;
+}
+
+function buildTaskInvoice(task: Task, driverId: string, driverName: string, supervisorId: string, supervisorName?: string): Omit<InvoiceRecord, 'id'> {
+  const priorityMultiplier = task.priority === 'HIGH' ? 1.5 : task.priority === 'MEDIUM' ? 1.2 : 1;
+  const quantity = 1;
+  const unitPrice = Math.round(DEFAULT_BASE_FEE * priorityMultiplier + (task.itemCount || 0) * 100);
+  const amount = quantity * unitPrice;
+  const subtotal = amount;
+  const taxAmount = Math.round(subtotal * DEFAULT_TAX_RATE);
+  const total = subtotal + taxAmount;
+
+  return {
+    taskId: task.id || '',
+    tripId: task.tripId,
+    driverId,
+    driverName,
+    supervisorId,
+    supervisorName: supervisorName || task.supervisorName || '',
+    recipientName: task.recipientName,
+    recipientPhone: task.recipientPhone,
+    routeLabel: `${task.pickupLocation} → ${task.deliveryLocation}`,
+    items: [
+      {
+        description: `Delivery fee for ${task.recipientName}`,
+        quantity,
+        unitPrice,
+        amount,
+      },
+    ],
+    subtotal,
+    taxRate: DEFAULT_TAX_RATE,
+    taxAmount,
+    total,
+    status: 'draft',
+    dueAt: Date.now() + (7 * 24 * 60 * 60 * 1000),
+    generatedBy: supervisorId,
+    generatedByRole: 'supervisor',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+}
+
+async function createInvoiceForTask(task: Task, driverId: string, driverName: string, supervisorId: string, supervisorName?: string): Promise<string | null> {
+  if (!task.id) return null;
+
+  const invoiceRef = doc(db, 'invoices', task.id);
+  const invoice = buildTaskInvoice(task, driverId, driverName, supervisorId, supervisorName);
+  const invoiceSnap = await getDoc(invoiceRef);
+  if (invoiceSnap.exists()) {
+    await updateDoc(invoiceRef, { ...invoice, updatedAt: Date.now() });
+    await updateDoc(doc(db, 'tasks', task.id), { invoiceId: invoiceRef.id, updatedAt: Date.now() });
+    return invoiceRef.id;
+  }
+
+  await setDoc(invoiceRef, invoice);
+  await updateDoc(doc(db, 'tasks', task.id), { invoiceId: invoiceRef.id, updatedAt: Date.now() });
+  return invoiceRef.id;
 }
 
 // ─── Create a new task ─────────────────────────────────────────────
@@ -38,6 +97,15 @@ export async function createTask(payload: TaskCreatePayload): Promise<string> {
   // Now set the QR code with the real doc ID
   const qrCode = generateQRCode(docRef.id);
   await updateDoc(doc(db, 'tasks', docRef.id), { qrCode });
+
+  if (payload.assignedDriverId) {
+    try {
+      const taskWithId: Task = { ...taskData, id: docRef.id } as Task;
+      await createInvoiceForTask(taskWithId, payload.assignedDriverId, payload.assignedDriverName || '', payload.supervisorId, payload.supervisorName);
+    } catch (error) {
+      console.log('Failed to create invoice for task:', error);
+    }
+  }
 
   // Send notification to assigned driver
   if (payload.assignedDriverId) {
@@ -112,8 +180,11 @@ export async function updateTask(taskId: string, updates: Partial<Task>): Promis
 
 // ─── Assign task to driver (with notification) ────────────────────
 export async function assignTaskToDriver(
-  taskId: string, driverId: string, driverName?: string,
-  supervisorId?: string, supervisorName?: string,
+  taskId: string,
+  driverId: string,
+  driverName?: string,
+  supervisorId?: string,
+  supervisorName?: string,
 ): Promise<void> {
   const now = Date.now();
   const task = await getTaskById(taskId);
@@ -140,6 +211,20 @@ export async function assignTaskToDriver(
   }
 
   await updateDoc(doc(db, 'tasks', taskId), updates);
+
+  try {
+    if (task) {
+      await createInvoiceForTask(
+        task,
+        driverId,
+        driverName || task.assignedDriverName || '',
+        supervisorId || task.supervisorId || '',
+        supervisorName || task.supervisorName,
+      );
+    }
+  } catch (error) {
+    console.log('Failed to create invoice during assignment:', error);
+  }
 
   // Send notification
   try {
@@ -278,4 +363,165 @@ export async function verifyQRScan(taskId: string, scannedCode: string): Promise
     updatedAt: Date.now(),
   });
   return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OFFLINE-AWARE WRAPPERS
+// These check connectivity and either execute directly or queue.
+// ═══════════════════════════════════════════════════════════════════
+import NetInfo from '@react-native-community/netinfo';
+import {
+  addToQueue,
+  updateCachedTask,
+  getCachedTasks,
+} from './offlineService';
+
+/** Check if the device currently has internet */
+async function checkOnline(): Promise<boolean> {
+  try {
+    const state = await NetInfo.fetch();
+    return !!(state.isConnected && state.isInternetReachable !== false);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Offline-aware accept task.
+ * Returns `{ offline: true }` if action was queued, `{ offline: false }` if executed live.
+ */
+export async function offlineAcceptTask(taskId: string): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await acceptTask(taskId);
+    return { offline: false };
+  }
+
+  // Queue the action
+  await addToQueue('accept_task', taskId);
+  // Optimistically update the cache
+  await updateCachedTask(taskId, {
+    status: 'accepted' as TaskStatus,
+    driverAccepted: true,
+    acceptedAt: Date.now(),
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware reject task.
+ */
+export async function offlineRejectTask(
+  taskId: string,
+  reason?: string,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await rejectTask(taskId, reason);
+    return { offline: false };
+  }
+
+  await addToQueue('reject_task', taskId, { reason: reason || '' });
+  await updateCachedTask(taskId, {
+    status: 'pending' as TaskStatus,
+    assignedDriverId: undefined,
+    assignedDriverName: undefined,
+    driverAccepted: false,
+    rejectedReason: reason || '',
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware update task status.
+ */
+export async function offlineUpdateTaskStatus(
+  taskId: string,
+  status: TaskStatus,
+  extras?: Partial<Task>,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await updateTaskStatus(taskId, status, extras);
+    return { offline: false };
+  }
+
+  await addToQueue('update_status', taskId, { status, extras: extras || {} });
+  const cacheUpdates: Partial<Task> = {
+    status,
+    offlineSynced: false,
+    ...extras,
+  };
+  if (status === 'arrived') cacheUpdates.arrivedAt = Date.now();
+  if (status === 'delivered') cacheUpdates.completedAt = Date.now();
+  await updateCachedTask(taskId, cacheUpdates);
+  return { offline: true };
+}
+
+/**
+ * Offline-aware complete task (with proof of delivery).
+ * When offline, local file URIs are stored in the queue and will be
+ * uploaded by the sync engine when the connection returns.
+ */
+export async function offlineCompleteTask(
+  taskId: string,
+  proofUrl: string,
+  lat: number,
+  lng: number,
+  signatureUrl?: string,
+  documentUrl?: string,
+  recipientConfirmedName?: string,
+  odometerReading?: number,
+): Promise<{ offline: boolean }> {
+  const online = await checkOnline();
+  if (online) {
+    await completeTask(taskId, proofUrl, lat, lng, signatureUrl, documentUrl, recipientConfirmedName, odometerReading);
+    return { offline: false };
+  }
+
+  await addToQueue('complete_task', taskId, {
+    proofUrl,
+    lat,
+    lng,
+    signatureUrl: signatureUrl || '',
+    documentUrl: documentUrl || '',
+    recipientConfirmedName: recipientConfirmedName || '',
+    odometerReading: odometerReading || 0,
+  });
+  await updateCachedTask(taskId, {
+    status: 'delivered' as TaskStatus,
+    proofOfDeliveryUrl: proofUrl,
+    signatureUrl: signatureUrl || undefined,
+    deliveryDocumentUrl: documentUrl || undefined,
+    recipientConfirmedName: recipientConfirmedName || undefined,
+    deliveryLatitude: lat,
+    deliveryLongitude: lng,
+    completedAt: Date.now(),
+    offlineSynced: false,
+  });
+  return { offline: true };
+}
+
+/**
+ * Offline-aware get task by ID.
+ * Returns task from Firestore if online, otherwise falls back to local cache.
+ */
+export async function offlineGetTaskById(taskId: string): Promise<Task | null> {
+  const online = await checkOnline();
+  if (online) {
+    try {
+      const task = await getTaskById(taskId);
+      if (task) {
+        // Cache this single task or update cache
+        await updateCachedTask(taskId, task);
+        return task;
+      }
+    } catch {}
+  }
+  
+  // Fall back to cache
+  const cached = await getCachedTasks();
+  return cached.find(t => t.id === taskId) || null;
 }

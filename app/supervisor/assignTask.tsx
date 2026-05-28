@@ -4,6 +4,7 @@ import {
   ScrollView, ActivityIndicator, Image, Modal
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import NetInfo from '@react-native-community/netinfo';
 import { useAuth } from '../../src/hooks/useAuth';
 import { useDrivers } from '../../src/hooks/useDrivers';
 import { createTask, getTaskById, updateTask, assignTaskToDriver, getAllTasks } from '../../src/services/taskService';
@@ -29,6 +30,18 @@ export default function AssignTaskScreen() {
   const { taskId } = useLocalSearchParams<{ taskId?: string }>();
   const { user, profile } = useAuth();
   const { drivers, loading: driversLoading } = useDrivers();
+  const [isOnline, setIsOnline] = useState(true);
+
+  // Monitor connectivity
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(!!(state.isConnected && state.isInternetReachable !== false));
+    });
+    NetInfo.fetch().then(state => {
+      setIsOnline(!!(state.isConnected && state.isInternetReachable !== false));
+    });
+    return () => unsubscribe();
+  }, []);
 
   const [pickupLocation, setPickupLocation] = useState('');
   const [deliveryLocation, setDeliveryLocation] = useState('');
@@ -119,6 +132,14 @@ export default function AssignTaskScreen() {
       return;
     }
 
+    // Check connectivity before proceeding
+    const state = await NetInfo.fetch();
+    const online = !!(state.isConnected && state.isInternetReachable !== false);
+    if (!online) {
+      showModal('error', 'Offline Mode', 'You must be online to create or update tasks.');
+      return;
+    }
+
     setLoading(true);
     try {
       if (isEditing && taskId) {
@@ -134,7 +155,7 @@ export default function AssignTaskScreen() {
           middleLocations,
         });
 
-        await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName);
+        await assignTaskToDriver(taskId, selectedDriverId, selectedDriverName, user?.uid, profile?.name || 'Supervisor');
 
         showModal('success', 'Task Updated', 'Task updated successfully', () => {
           router.back();
@@ -177,6 +198,13 @@ export default function AssignTaskScreen() {
 
   return (
     <View style={styles.container}>
+      {/* Offline Banner */}
+      {!isOnline && (
+        <View style={styles.offlineBanner}>
+          <Text style={styles.offlineText}>⚠️ Offline: Task creation requires connection</Text>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtnWrapper}>
@@ -437,16 +465,16 @@ export default function AssignTaskScreen() {
               </TouchableOpacity>
 
               <TouchableOpacity
-                style={[styles.submitBtn, { flex: 2, marginTop: 0 }, loading && { opacity: 0.6 }]}
+                style={[styles.submitBtn, { flex: 2, marginTop: 0 }, (!isOnline || loading) && { opacity: 0.6 }]}
                 onPress={handleSubmit}
-                disabled={loading}
+                disabled={!isOnline || loading}
                 activeOpacity={0.8}
               >
                 {loading ? (
                   <ActivityIndicator color={COLORS.WHITE} />
                 ) : (
                   <Text style={styles.submitText}>
-                    {isEditing ? 'Save Changes' : 'Create Task'}
+                    {!isOnline ? 'Offline' : (isEditing ? 'Save Changes' : 'Create Task')}
                   </Text>
                 )}
               </TouchableOpacity>
@@ -721,5 +749,18 @@ const styles = StyleSheet.create({
     color: COLORS.WHITE,
     fontSize: FONT_SIZES.LG,
     fontWeight: '700',
+  },
+  offlineBanner: {
+    backgroundColor: COLORS.DANGER + '15',
+    paddingVertical: SPACING.SM,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.DANGER + '30',
+  },
+  offlineText: {
+    fontSize: FONT_SIZES.XS,
+    fontWeight: '700',
+    color: COLORS.DANGER,
   },
 });
