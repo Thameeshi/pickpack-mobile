@@ -21,7 +21,7 @@ import { captureRef } from 'react-native-view-shot';
 
 export default function ProofOfDeliveryScreen() {
   const router = useRouter();
-  const { taskId, supervisorId } = useLocalSearchParams<{ taskId: string; supervisorId?: string }>();
+  const { taskId, supervisorId, fromEndTrip } = useLocalSearchParams<{ taskId: string; supervisorId?: string; fromEndTrip?: string }>();
   const { user, profile } = useAuth();
   const { location } = useLocation();
   const { isOnline } = useOfflineSync();
@@ -96,6 +96,72 @@ export default function ProofOfDeliveryScreen() {
     }
   };
 
+  const autoEndTrip = async () => {
+    try {
+      const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+      const savedOdo = await AsyncStorage.getItem('@pickpack_temp_end_odometer');
+      const savedPhoto = await AsyncStorage.getItem('@pickpack_temp_end_photo');
+      const savedTripId = await AsyncStorage.getItem('@pickpack_ending_trip_id');
+
+      if (savedOdo && savedTripId) {
+        let loc = undefined;
+        try {
+          const { getCurrentLocation } = require('../../src/services/locationService');
+          const position = await getCurrentLocation();
+          loc = { lat: position.coords.latitude, lng: position.coords.longitude };
+        } catch {}
+
+        // 1. Save odometer reading
+        const { offlineAddOdometerReading, offlineUploadOdometerPhoto } = require('../../src/services/fuelService');
+        const readingId = await offlineAddOdometerReading({
+          driverId: user!.uid,
+          driverName: profile?.name || '',
+          reading: Number(savedOdo),
+          type: 'trip_end',
+          location: loc,
+          tripId: savedTripId,
+          timestamp: Date.now(),
+          verified: false,
+        });
+
+        if (savedPhoto) {
+          try { await offlineUploadOdometerPhoto(readingId, savedPhoto); } catch {}
+        }
+
+        // 2. End the trip session
+        const { offlineEndTrip } = require('../../src/services/tripService');
+        await offlineEndTrip(savedTripId, Number(savedOdo), savedPhoto, loc);
+
+        // 3. Stop GPS tracking
+        try {
+          const { stopTrackingDriverLocation } = require('../../src/services/locationService');
+          stopTrackingDriverLocation();
+        } catch {}
+
+        // 4. Mark driver as offline if online
+        if (isOnline) {
+          try {
+            const { doc, setDoc } = require('firebase/firestore');
+            const { db } = require('../../src/services/firebase');
+            await setDoc(
+              doc(db, 'drivers', user!.uid),
+              { isOnline: false },
+              { merge: true }
+            );
+          } catch {}
+        }
+
+        // 5. Clean up temporary stored values
+        await AsyncStorage.removeItem('@pickpack_temp_end_odometer');
+        await AsyncStorage.removeItem('@pickpack_temp_end_photo');
+        await AsyncStorage.removeItem('@pickpack_ending_trip_id');
+        console.log('✅ Auto ended trip successfully');
+      }
+    } catch (e) {
+      console.log('Error in autoEndTrip:', e);
+    }
+  };
+
   const handleSubmit = async () => {
     if (!photo) { Alert.alert('Required', 'Take a delivery photo'); return; }
     if (paths.length === 0) { Alert.alert('Required', 'Get recipient signature'); return; }
@@ -120,7 +186,6 @@ export default function ProofOfDeliveryScreen() {
       // Check if we are online or offline
       if (!isOnline) {
         // --- OFFLINE WORKFLOW ---
-        // Complete the task offline: passes local file paths, which the sync engine will upload later.
         await offlineCompleteTask(
           taskId!,
           photo, // local image URI
@@ -130,82 +195,71 @@ export default function ProofOfDeliveryScreen() {
           document || undefined, // local doc URI (optional)
           recipientName.trim(),
         );
-
-        setOfflineSavedVisible(true);
-        return;
-      }
-
-      // --- ONLINE WORKFLOW ---
-      // 1. Upload delivery photo (REQUIRED — block completion if fails)
-      let proofUrl = '';
-      try {
-        proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
-        console.log('✅ Photo uploaded:', proofUrl);
-      } catch (uploadErr: any) {
-        const msg = uploadErr?.message || String(uploadErr);
-        console.error('❌ Photo upload failed:', msg);
-        Alert.alert('Upload Error (Photo)', msg + '\n\nPlease check your connection and try again.');
-        setUploading(false);
-        return; // BLOCK
-      }
-
-      // 2. Upload signature (REQUIRED — block completion if fails)
-      let signatureUrl = '';
-      if (signatureUri) {
+      } else {
+        // --- ONLINE WORKFLOW ---
+        // 1. Upload delivery photo
+        let proofUrl = '';
         try {
-          signatureUrl = await uploadSignature(taskId!, signatureUri);
-          console.log('✅ Signature uploaded:', signatureUrl);
-        } catch (e: any) {
-          const msg = e?.message || String(e);
-          console.error('❌ Signature upload failed:', msg);
-          Alert.alert('Upload Error (Signature)', msg + '\n\nPlease try again.');
+          proofUrl = await uploadProofOfDelivery(taskId!, photo, `${taskId}-${Date.now()}.jpg`);
+        } catch (uploadErr: any) {
+          const msg = uploadErr?.message || String(uploadErr);
+          Alert.alert('Upload Error (Photo)', msg + '\n\nPlease check your connection.');
           setUploading(false);
-          return; // BLOCK
+          return;
         }
-      }
 
-      // 3. Upload document if taken (OPTIONAL — don't block completion)
-      let documentUrl: string | undefined;
-      if (document) {
-        try {
-          documentUrl = await uploadDeliveryDocument(taskId!, document);
-          console.log('✅ Document uploaded:', documentUrl);
-        } catch (e: any) {
-          console.error('❌ Document upload failed:', e?.message);
-          Alert.alert('Document Upload Warning', 'Document could not be uploaded, but delivery can proceed.');
+        // 2. Upload signature
+        let signatureUrl = '';
+        if (signatureUri) {
+          try {
+            signatureUrl = await uploadSignature(taskId!, signatureUri);
+          } catch (e: any) {
+            const msg = e?.message || String(e);
+            Alert.alert('Upload Error (Signature)', msg);
+            setUploading(false);
+            return;
+          }
         }
-      }
 
-      // 4. Complete the task
-      await completeTask(
-        taskId!,
-        proofUrl,
-        location?.coords?.latitude || 0,
-        location?.coords?.longitude || 0,
-        signatureUrl,
-        documentUrl,
-        recipientName.trim(),
-      );
+        // 3. Upload document (optional)
+        let documentUrl: string | undefined;
+        if (document) {
+          try {
+            documentUrl = await uploadDeliveryDocument(taskId!, document);
+          } catch {}
+        }
 
-      // 5. Link to active trip
-      try {
-        const trip = await getActiveTrip(user!.uid);
-        if (trip?.id) await addTaskToTrip(trip.id, taskId!);
-      } catch {}
+        // 4. Complete the task
+        await completeTask(
+          taskId!,
+          proofUrl,
+          location?.coords?.latitude || 0,
+          location?.coords?.longitude || 0,
+          signatureUrl,
+          documentUrl,
+          recipientName.trim(),
+        );
 
-      // 6. Notify supervisor
-      if (supervisorId) {
+        // 5. Link to active trip
         try {
-          await notifyDeliveryCompleted(
-            supervisorId,
-            profile?.name || 'Driver',
-            taskId!,
-            recipientName.trim(),
-          );
+          const trip = await getActiveTrip(user!.uid);
+          if (trip?.id) await addTaskToTrip(trip.id, taskId!);
         } catch {}
+
+        // 6. Notify supervisor
+        if (supervisorId) {
+          try {
+            await notifyDeliveryCompleted(
+              supervisorId,
+              profile?.name || 'Driver',
+              taskId!,
+              recipientName.trim(),
+            );
+          } catch {}
+        }
       }
 
-      // 7. Check if there are more pending tasks to complete
+      // Both workflows check for pending tasks
       let nextPendingTask: string | null = null;
       let nextSupervisorId: string | null = null;
       let pendingCount = 0;
@@ -213,7 +267,7 @@ export default function ProofOfDeliveryScreen() {
         const trip = await getActiveTrip(user!.uid);
         if (trip?.taskIds && trip.taskIds.length > 0) {
           for (const tid of trip.taskIds) {
-            if (tid === taskId) continue; // skip the one we just completed
+            if (tid === taskId) continue;
             const t = await offlineGetTaskById(tid);
             if (t && t.status !== 'delivered' && t.status !== 'failed') {
               pendingCount++;
@@ -228,20 +282,39 @@ export default function ProofOfDeliveryScreen() {
 
       if (nextPendingTask && pendingCount > 0) {
         Alert.alert(
-          '✅ Delivered!',
-          `Proof of delivery uploaded. You still have ${pendingCount} more pending delivery${pendingCount > 1 ? 'ies' : ''}. Continue to the next one?`,
+          isOnline ? '✅ Delivered!' : 'Saved Offline',
+          isOnline 
+            ? `Proof of delivery uploaded. You still have ${pendingCount} more pending delivery${pendingCount > 1 ? 'ies' : ''}. Continue to the next one?`
+            : `Delivery saved locally. You still have ${pendingCount} more pending delivery${pendingCount > 1 ? 'ies' : ''}. Continue to the next one?`,
           [
-            { text: 'Dashboard', style: 'cancel', onPress: () => router.replace('/driver/dashboard') },
+            { text: fromEndTrip === 'true' ? 'End Trip' : 'Dashboard', style: 'cancel', onPress: () => router.replace(fromEndTrip === 'true' ? '/driver/tripEnd' : '/driver/dashboard') },
             {
               text: `Next (${pendingCount} left)`,
-              onPress: () => router.replace(`/driver/proofOfDelivery?taskId=${nextPendingTask}&supervisorId=${nextSupervisorId || ''}`),
+              onPress: () => router.replace(`/driver/proofOfDelivery?taskId=${nextPendingTask}&supervisorId=${nextSupervisorId || ''}${fromEndTrip === 'true' ? '&fromEndTrip=true' : ''}`),
             },
           ]
         );
       } else {
-        Alert.alert('✅ All Done!', 'All deliveries completed successfully!', [
-          { text: 'OK', onPress: () => router.replace('/driver/dashboard') },
-        ]);
+        if (fromEndTrip === 'true') {
+          await autoEndTrip();
+          Alert.alert(
+            isOnline ? '✅ Trip Ended' : 'Saved Offline',
+            isOnline 
+              ? 'All deliveries completed and trip ended successfully!'
+              : 'All deliveries completed and trip ended locally! It will sync when online.',
+            [
+              { text: 'OK', onPress: () => router.replace('/driver/dashboard') },
+            ]
+          );
+        } else {
+          Alert.alert(
+            isOnline ? '✅ All Done!' : 'Saved Offline',
+            isOnline ? 'All deliveries completed successfully!' : 'All deliveries completed successfully offline!',
+            [
+              { text: 'OK', onPress: () => router.replace('/driver/dashboard') },
+            ]
+          );
+        }
       }
     } catch (e: any) {
       Alert.alert('Error', e.message || 'Upload failed');
@@ -440,7 +513,11 @@ export default function ProofOfDeliveryScreen() {
               activeOpacity={0.85}
               onPress={() => {
                 setOfflineSavedVisible(false);
-                router.replace('/driver/dashboard');
+                if (fromEndTrip === 'true') {
+                  router.replace('/driver/tripEnd');
+                } else {
+                  router.replace('/driver/dashboard');
+                }
               }}
             >
               <Text style={styles.modalBtnPrimaryText}>OK</Text>

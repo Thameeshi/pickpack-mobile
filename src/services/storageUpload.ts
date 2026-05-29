@@ -6,9 +6,9 @@
  */
 import * as FileSystem from 'expo-file-system/legacy';
 
-// Cloudinary configuration
-const CLOUDINARY_CLOUD_NAME = 'dvv9qjg43';
-const CLOUDINARY_UPLOAD_PRESET = 'pickpack_images'; // Must be created as "Unsigned" preset
+// Cloudinary configuration - configurable via environment variables with defaults
+const CLOUDINARY_CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'dvv9qjg43';
+const CLOUDINARY_UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'pickpack_images'; // Must be created as "Unsigned" preset
 const CLOUDINARY_API_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
 
 /**
@@ -25,7 +25,7 @@ export async function uploadFileToStorage(
   try {
     // Read file as base64
     const fileData = await FileSystem.readAsStringAsync(localUri, {
-      encoding: FileSystem.EncodingType.Base64,
+      encoding: 'base64',
     });
 
     // Create FormData with all required fields

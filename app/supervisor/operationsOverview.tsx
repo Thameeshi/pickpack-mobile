@@ -149,8 +149,8 @@ export default function OperationsOverviewScreen() {
             <View style={styles.opsGrid}>
               {topMetrics.map(m => (
                 <View key={m.key} style={[styles.opsCard, { backgroundColor: m.bg, borderColor: m.color + '30' }]}>
-                  <Text style={[styles.opsValue, { color: m.color }]}>{m.value}</Text>
                   <Text style={styles.opsLabel}>{m.label}</Text>
+                  <Text style={[styles.opsValue, { color: m.color }]}>{m.value}</Text>
                   <Text style={styles.opsMeta}>{m.meta}</Text>
                 </View>
               ))}
@@ -164,6 +164,18 @@ export default function OperationsOverviewScreen() {
               {routeStatusCounts.map(status => {
                 const count = allTasks.filter(t => t.status === status).length;
                 const widthPct = allTasks.length ? (count / allTasks.length) * 100 : 0;
+                
+                // Lightweight colors matching status type
+                const statusColor = {
+                  pending: '#94A3B8',     // Soft slate
+                  assigned: '#FBBF24',    // Soft amber
+                  accepted: '#F97316',    // Soft orange
+                  in_progress: '#3B82F6', // Soft blue
+                  arrived: '#8B5CF6',     // Soft purple
+                  delivered: '#10B981',   // Soft emerald green
+                  failed: '#EF4444',      // Soft red
+                }[status] || '#64748B';
+
                 return (
                   <View key={status} style={styles.routeRowMetric}>
                     <View style={styles.routeRowTop}>
@@ -176,12 +188,7 @@ export default function OperationsOverviewScreen() {
                           styles.routeBarFill,
                           {
                             width: `${widthPct}%` as any,
-                            backgroundColor:
-                              status === 'failed'
-                                ? COLORS.DANGER
-                                : status === 'delivered'
-                                  ? COLORS.SUCCESS
-                                  : COLORS.PRIMARY,
+                            backgroundColor: statusColor,
                           },
                         ]}
                       />
@@ -210,7 +217,7 @@ export default function OperationsOverviewScreen() {
                       <View
                         style={[
                           styles.routeBarFill,
-                          { width: `${(driver.assigned / maxLoad) * 100}%`, backgroundColor: COLORS.SECONDARY },
+                          { width: `${(driver.assigned / maxLoad) * 100}%`, backgroundColor: '#818CF8' }, // Lightweight soft indigo
                         ]}
                       />
                     </View>
@@ -223,25 +230,25 @@ export default function OperationsOverviewScreen() {
               {driverLoads.length === 0 && <Text style={styles.emptyText}>No order allocation yet.</Text>}
             </View>
 
-            <View style={styles.opsGrid}>
+             <View style={styles.opsGrid}>
               <View style={[styles.opsCard, { backgroundColor: '#F0F9FF', borderColor: '#7DD3FC55' }]}>
-                <Text style={styles.opsValue}>{Math.round(completionRate * 100)}%</Text>
                 <Text style={styles.opsLabel}>Delivery completion</Text>
+                <Text style={styles.opsValue}>{Math.round(completionRate * 100)}%</Text>
                 <Text style={styles.opsMeta}>current snapshot</Text>
               </View>
               <View style={[styles.opsCard, { backgroundColor: '#ECFDF5', borderColor: '#34D39955' }]}>
-                <Text style={styles.opsValue}>{Math.round(onTimeRate * 100)}%</Text>
                 <Text style={styles.opsLabel}>On-time delivery</Text>
+                <Text style={styles.opsValue}>{Math.round(onTimeRate * 100)}%</Text>
                 <Text style={styles.opsMeta}>current snapshot</Text>
               </View>
               <View style={[styles.opsCard, { backgroundColor: '#FFF7ED', borderColor: '#FDBA7455' }]}>
-                <Text style={styles.opsValue}>N/A</Text>
                 <Text style={styles.opsLabel}>Customer satisfaction</Text>
+                <Text style={styles.opsValue}>N/A</Text>
                 <Text style={styles.opsMeta}>feedback not tracked yet</Text>
               </View>
               <View style={[styles.opsCard, { backgroundColor: '#F5F3FF', borderColor: '#C4B5FD55' }]}>
-                <Text style={styles.opsValue}>{completedTrips.length ? `${fuelEfficiencyPerRoute.toFixed(1)}L` : '—'}</Text>
                 <Text style={styles.opsLabel}>Fuel / route</Text>
+                <Text style={styles.opsValue}>{completedTrips.length ? `${fuelEfficiencyPerRoute.toFixed(1)}L` : '—'}</Text>
                 <Text style={styles.opsMeta}>per completed route</Text>
               </View>
             </View>
@@ -304,9 +311,9 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.XXL,
     fontWeight: '800',
     color: COLORS.GRAY_900,
+    marginTop: 4,
   },
   opsLabel: {
-    marginTop: 4,
     fontSize: FONT_SIZES.SM,
     fontWeight: '700',
     color: COLORS.GRAY_800,

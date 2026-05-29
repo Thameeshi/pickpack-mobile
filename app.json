@@ -7,7 +7,6 @@
     "icon": "./assets/pickpack-logo.png",
     "scheme": "pickpack",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
     "splash": {
       "image": "./assets/pickpack-logo.png",
       "resizeMode": "contain",

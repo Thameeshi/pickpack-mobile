@@ -6,6 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { doc, setDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../../src/services/firebase';
 import { useAuth } from '../../src/hooks/useAuth';
 import { offlineEndTrip, offlineGetActiveTrip } from '../../src/services/tripService';
@@ -42,10 +43,9 @@ export default function TripEndScreen() {
     for (const t of tasks) {
       const taskId = t.id || '';
       const miss: string[] = [];
-      if (t.status !== 'delivered') miss.push('Delivery not completed');
-      if (!t.proofOfDeliveryUrl) miss.push('Delivery photo');
-      if (!t.signatureUrl) miss.push('Signature');
-      if (!t.deliveryDocumentUrl) miss.push('Document');
+      if (t.status !== 'delivered' && t.status !== 'failed') {
+        miss.push('Delivery not completed');
+      }
       if (miss.length > 0) {
         missing.push({
           taskId,
@@ -63,6 +63,15 @@ export default function TripEndScreen() {
       if (!user?.uid) return;
       const trip = await offlineGetActiveTrip(user.uid);
       setActiveTrip(trip);
+
+      // Restore saved ending odometer and photo
+      try {
+        const savedOdo = await AsyncStorage.getItem('@pickpack_temp_end_odometer');
+        const savedPhoto = await AsyncStorage.getItem('@pickpack_temp_end_photo');
+        if (savedOdo) setOdometer(savedOdo);
+        if (savedPhoto) setPhoto(savedPhoto);
+      } catch {}
+
       setLoadingTrip(false);
     })();
   }, [user]);
@@ -89,23 +98,44 @@ export default function TripEndScreen() {
       return;
     }
 
-    // Block ending a trip unless all deliveries have required proof uploaded
+    // 1. FIRST validate odometer entry and photo
+    if (!odometer || isNaN(Number(odometer))) {
+      Alert.alert('⚠️ Required', 'Please enter your ending odometer reading');
+      return;
+    }
+    if (!photo) {
+      Alert.alert('📷 Required', 'Please take a photo of your odometer');
+      return;
+    }
+    if (activeTrip && Number(odometer) < activeTrip.startOdometer) {
+      Alert.alert('⚠️ Invalid', 'End reading cannot be less than start reading');
+      return;
+    }
+
+    // 2. THEN check for pending deliveries
     setCheckingRequirements(true);
     try {
       const tasks = await getTripTasks(activeTrip);
       const missing = getMissingRequirements(tasks);
       if (missing.length > 0) {
+        // Save current values to AsyncStorage
+        try {
+          await AsyncStorage.setItem('@pickpack_temp_end_odometer', odometer);
+          await AsyncStorage.setItem('@pickpack_temp_end_photo', photo);
+          await AsyncStorage.setItem('@pickpack_ending_trip_id', activeTrip.id);
+        } catch {}
+
         const first = missing[0];
         Alert.alert(
-          'Complete delivery proof first',
-          `You can end the trip only after completing:\n\n• Delivery photo\n• Signature\n• Document\n\nMissing for ${missing.length} task(s).`,
+          'Ongoing Deliveries',
+          'You must complete all ongoing deliveries before ending your trip.',
           [
             { text: 'Cancel', style: 'cancel' },
             {
-              text: 'Go to Proof',
+              text: 'Complete Deliveries',
               onPress: () => {
                 if (first.taskId) {
-                  router.replace(`/driver/proofOfDelivery?taskId=${first.taskId}&supervisorId=${first.supervisorId || ''}`);
+                  router.replace(`/driver/proofOfDelivery?taskId=${first.taskId}&supervisorId=${first.supervisorId || ''}&fromEndTrip=true`);
                 } else {
                   router.replace('/driver/dashboard');
                 }
@@ -121,19 +151,6 @@ export default function TripEndScreen() {
       return;
     } finally {
       setCheckingRequirements(false);
-    }
-
-    if (!odometer || isNaN(Number(odometer))) {
-      Alert.alert('⚠️ Required', 'Please enter your ending odometer reading');
-      return;
-    }
-    if (!photo) {
-      Alert.alert('📷 Required', 'Please take a photo of your odometer');
-      return;
-    }
-    if (activeTrip && Number(odometer) < activeTrip.startOdometer) {
-      Alert.alert('⚠️ Invalid', 'End reading cannot be less than start reading');
-      return;
     }
 
     setShowConfirmModal(true);
@@ -167,6 +184,12 @@ export default function TripEndScreen() {
       // 2. End the trip
       const summary = await offlineEndTrip(activeTrip!.id!, Number(odometer), photo, loc);
       setTripSummary(summary);
+
+      // Clear temp storage
+      try {
+        await AsyncStorage.removeItem('@pickpack_temp_end_odometer');
+        await AsyncStorage.removeItem('@pickpack_temp_end_photo');
+      } catch {}
 
       // 3. Stop GPS tracking
       stopTrackingDriverLocation();

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { collection, onSnapshot, query, where } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../services/firebase';
 import {
   startTrackingDriverLocation,
@@ -51,6 +52,27 @@ export function useDriverLocationTracking(
 export function useShouldTrackDriverLocation(driverId: string | undefined): boolean {
   const [hasActiveSession, setHasActiveSession] = useState(false);
   const [hasActiveTask, setHasActiveTask] = useState(false);
+  const [hasLocalActiveTrip, setHasLocalActiveTrip] = useState(true);
+
+  useEffect(() => {
+    if (!driverId) {
+      setHasLocalActiveTrip(false);
+      return;
+    }
+
+    const checkLocalTrip = async () => {
+      try {
+        const raw = await AsyncStorage.getItem('@pickpack_active_trip');
+        setHasLocalActiveTrip(!!raw);
+      } catch {
+        setHasLocalActiveTrip(false);
+      }
+    };
+
+    checkLocalTrip();
+    const interval = setInterval(checkLocalTrip, 2500);
+    return () => clearInterval(interval);
+  }, [driverId]);
 
   useEffect(() => {
     if (!driverId) {
@@ -92,5 +114,5 @@ export function useShouldTrackDriverLocation(driverId: string | undefined): bool
     };
   }, [driverId]);
 
-  return hasActiveSession || hasActiveTask;
+  return (hasActiveSession || hasActiveTask) && hasLocalActiveTrip;
 }

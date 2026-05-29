@@ -13,6 +13,7 @@ import { TripSession } from '../../src/types';
 import { Task } from '../../src/types';
 import { RepairRequest } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
+import { Ionicons } from '@expo/vector-icons';
 
 const { width } = Dimensions.get('window');
 const DAY_START = (() => {
@@ -302,11 +303,15 @@ export default function SupervisorDashboardScreen() {
               onPress={() => router.push('/supervisor/operationsOverview')}
               style={styles.overviewHeader}
             >
-              <View style={{ flex: 1 }}>
+              <Image 
+                source={require('../../assets/icons/overview.png')} 
+                style={styles.overviewIcon} 
+              />
+              <View style={{ flex: 1, marginLeft: SPACING.MD }}>
                 <Text style={styles.overviewTitle}>Overview</Text>
                 <Text style={styles.overviewSubtitle}>Daily operations dashboard</Text>
               </View>
-              <Text style={styles.overviewChevron}>{'›'}</Text>
+              <Ionicons name="chevron-forward" size={24} color={COLORS.GRAY_400} />
             </TouchableOpacity>
           </View>
         </View>
@@ -411,28 +416,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: SPACING.LG,
     paddingVertical: SPACING.LG,
   },
+  overviewIcon: {
+    width: 44,
+    height: 44,
+    resizeMode: 'contain',
+  },
   overviewTitle: {
     fontSize: FONT_SIZES.LG,
-    fontWeight: '900',
+    fontWeight: '700',
     color: COLORS.GRAY_900,
   },
   overviewSubtitle: {
-    marginTop: 4,
-    fontSize: FONT_SIZES.XS,
+    marginTop: 2,
+    fontSize: FONT_SIZES.SM,
     color: COLORS.GRAY_500,
     fontWeight: '500',
-  },
-  overviewChevron: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: COLORS.GRAY_100,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    lineHeight: 34,
-    fontSize: 20,
-    fontWeight: '900',
-    color: COLORS.GRAY_800,
   },
   opsGrid: {
     flexDirection: 'row',

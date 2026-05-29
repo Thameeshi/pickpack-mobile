@@ -46,8 +46,8 @@ export default function DriverDashboardScreen() {
   const [lastMessageSender, setLastMessageSender] = useState('');
   const [lastMessageText, setLastMessageText] = useState('');
 
-  // Load active trip session & fuel expenses
-  useFocusEffect(useCallback(() => {
+  // Reusable callback to load active trip session & fuel expenses
+  const loadActiveTripAndExpenses = useCallback(() => {
     if (user?.uid) {
       offlineGetActiveTrip(user.uid).then(async (trip) => {
         setActiveTrip2(trip);
@@ -69,9 +69,14 @@ export default function DriverDashboardScreen() {
       }).catch(() => { });
       getFuelExpensesByDriver(user.uid).then(setFuelExpenses).catch(() => { });
     }
-  }, [user?.uid]));
+  }, [user?.uid]);
 
-  // Refetch when screen is focused
+  // Load active trip session & fuel expenses on focus
+  useFocusEffect(useCallback(() => {
+    loadActiveTripAndExpenses();
+  }, [loadActiveTripAndExpenses]));
+
+  // Refetch tasks when screen is focused
   useFocusEffect(useCallback(() => { refetch(); refreshCounts(); }, [refetch, refreshCounts]));
 
   // Listen for unread chat messages
@@ -142,18 +147,35 @@ export default function DriverDashboardScreen() {
     };
   }, [activeTrip?.id]);
 
-  const handleRefresh = async () => { setRefreshing(true); await refetch(); setRefreshing(false); };
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      await Promise.all([
+        refetch(),
+        loadActiveTripAndExpenses(),
+        refreshCounts(),
+      ]);
+    } catch (e) {
+      console.log('handleRefresh error:', e);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     // Offline actions can affect trip/task state. Once syncing completes, refetch so UI updates.
     if (isSyncing) wasSyncingRef.current = true;
     if (wasSyncingRef.current && !isSyncing && isOnline) {
       wasSyncingRef.current = false;
-      if (pendingCount === 0) {
+      // Small delay to let AsyncStorage settle after sync engine finishes
+      const timer = setTimeout(() => {
         refetch();
-      }
+        loadActiveTripAndExpenses();
+        refreshCounts();
+      }, 500);
+      return () => clearTimeout(timer);
     }
-  }, [isOnline, isSyncing, pendingCount, refetch]);
+  }, [isOnline, isSyncing, refetch, loadActiveTripAndExpenses, refreshCounts]);
 
   const openSyncStatus = () => {
     setSyncStatusVisible(true);
@@ -568,15 +590,7 @@ export default function DriverDashboardScreen() {
                   <Text style={styles.gridCardLabel}>End Trip</Text>
                 </TouchableOpacity>
               )}
-              {activeTrip2 && nextProofTask && (
-                <TouchableOpacity
-                  style={[styles.gridCard, { borderWidth: 2, borderColor: COLORS.WARNING }]}
-                  onPress={() => router.push(`/driver/proofOfDelivery?taskId=${nextProofTask.taskId}&supervisorId=${nextProofTask.supervisorId || ''}`)}
-                >
-                  <Ionicons name="document-text-outline" size={34} color={COLORS.PRIMARY} />
-                  <Text style={styles.gridCardLabel}>Proof</Text>
-                </TouchableOpacity>
-              )}
+
               <TouchableOpacity style={styles.gridCard} onPress={() => router.push('/driver/odometer')}>
                 <Image source={require('../../assets/icons/odometer.png')} style={styles.gridImageIcon} />
                 <Text style={styles.gridCardLabel}>Odometer</Text>
