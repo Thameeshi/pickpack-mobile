@@ -4,7 +4,7 @@ import {
   ActivityIndicator, Dimensions, Platform,
 } from 'react-native';
 import MapView, { Marker, Callout, PROVIDER_GOOGLE } from 'react-native-maps';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useDrivers, useDriverLocations } from '../../src/hooks/useDrivers';
 import { getDriversTripStatus } from '../../src/services/tripService';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
@@ -28,6 +28,7 @@ function getMarkerColor(speed?: number | null): string {
 
 export default function DriverTrackingScreen() {
   const router = useRouter();
+  const { driverId: focusDriverId } = useLocalSearchParams<{ driverId?: string }>();
   const { drivers, loading } = useDrivers();
   const locations = useDriverLocations();
   const [viewMode, setViewMode] = useState<'list' | 'map'>('map');
@@ -44,6 +45,24 @@ export default function DriverTrackingScreen() {
         .catch(() => {});
     }
   }, [drivers]);
+
+  // Deep link from driver details → focus that driver on the map
+  useEffect(() => {
+    if (!focusDriverId || loading) return;
+    const id = Array.isArray(focusDriverId) ? focusDriverId[0] : focusDriverId;
+    const loc = locations[id];
+    if (!loc || !mapRef.current) return;
+    const timer = setTimeout(() => {
+      mapRef.current?.animateToRegion({
+        latitude: loc.lat,
+        longitude: loc.lng,
+        latitudeDelta: 0.01,
+        longitudeDelta: 0.01,
+      }, 500);
+      setSelectedDriver(id);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [focusDriverId, loading, locations]);
 
   if (loading) {
     return <View style={styles.loadingContainer}><ActivityIndicator size="large" color={COLORS.PRIMARY} /></View>;

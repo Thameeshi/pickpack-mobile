@@ -6,6 +6,7 @@ import {
 import { useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { doc, setDoc } from 'firebase/firestore';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { db } from '../../src/services/firebase';
 import { useAuth } from '../../src/hooks/useAuth';
 import { offlineEndTrip, offlineGetActiveTrip } from '../../src/services/tripService';
@@ -28,12 +29,49 @@ export default function TripEndScreen() {
   const [tripSummary, setTripSummary] = useState<TripSession | null>(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingTasks, setPendingTasks] = useState<Task[]>([]);
+  const [checkingRequirements, setCheckingRequirements] = useState(false);
+
+  const getTripTasks = async (trip: TripSession): Promise<Task[]> => {
+    const ids = (trip.taskIds || []).filter(Boolean);
+    if (ids.length === 0) return [];
+    const tasks = await Promise.all(ids.map((id: string) => offlineGetTaskById(id)));
+    return tasks.filter((t): t is Task => !!t);
+  };
+
+  const getMissingRequirements = (tasks: Task[]) => {
+    const missing: { taskId: string; title: string; missing: string[]; supervisorId?: string }[] = [];
+    for (const t of tasks) {
+      const taskId = t.id || '';
+      const miss: string[] = [];
+      if (t.status !== 'delivered' && t.status !== 'failed') {
+        miss.push('Delivery not completed');
+      }
+      if (miss.length > 0) {
+        missing.push({
+          taskId,
+          title: `${t.pickupLocation} → ${t.deliveryLocation}`,
+          missing: miss,
+          supervisorId: t.supervisorId,
+        });
+      }
+    }
+    return missing;
+  };
 
   useEffect(() => {
     (async () => {
       if (!user?.uid) return;
       const trip = await offlineGetActiveTrip(user.uid);
       setActiveTrip(trip);
+
+      // Restore saved ending odometer and photo
+      try {
+        const savedOdo = await AsyncStorage.getItem('@pickpack_temp_end_odometer');
+        const savedPhoto = await AsyncStorage.getItem('@pickpack_temp_end_photo');
+        if (savedOdo) setOdometer(savedOdo);
+        if (savedPhoto) setPhoto(savedPhoto);
+      } catch {}
+
       setLoadingTrip(false);
     })();
   }, [user]);
@@ -55,6 +93,12 @@ export default function TripEndScreen() {
   };
 
   const handleEndTrip = async () => {
+    if (!activeTrip?.id) {
+      Alert.alert('No Active Trip', 'There is no active trip to end.');
+      return;
+    }
+
+    // 1. FIRST validate odometer entry and photo
     if (!odometer || isNaN(Number(odometer))) {
       Alert.alert('⚠️ Required', 'Please enter your ending odometer reading');
       return;
@@ -66,6 +110,47 @@ export default function TripEndScreen() {
     if (activeTrip && Number(odometer) < activeTrip.startOdometer) {
       Alert.alert('⚠️ Invalid', 'End reading cannot be less than start reading');
       return;
+    }
+
+    // 2. THEN check for pending deliveries
+    setCheckingRequirements(true);
+    try {
+      const tasks = await getTripTasks(activeTrip);
+      const missing = getMissingRequirements(tasks);
+      if (missing.length > 0) {
+        // Save current values to AsyncStorage
+        try {
+          await AsyncStorage.setItem('@pickpack_temp_end_odometer', odometer);
+          await AsyncStorage.setItem('@pickpack_temp_end_photo', photo);
+          await AsyncStorage.setItem('@pickpack_ending_trip_id', activeTrip.id);
+        } catch {}
+
+        const first = missing[0];
+        Alert.alert(
+          'Ongoing Deliveries',
+          'You must complete all ongoing deliveries before ending your trip.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Complete Deliveries',
+              onPress: () => {
+                if (first.taskId) {
+                  router.replace(`/driver/proofOfDelivery?taskId=${first.taskId}&supervisorId=${first.supervisorId || ''}&fromEndTrip=true`);
+                } else {
+                  router.replace('/driver/dashboard');
+                }
+              },
+            },
+          ],
+        );
+        return;
+      }
+    } catch (e) {
+      console.log('Trip requirement check failed:', e);
+      Alert.alert('Error', 'Unable to verify trip requirements. Please try again.');
+      return;
+    } finally {
+      setCheckingRequirements(false);
     }
 
     setShowConfirmModal(true);
@@ -99,6 +184,12 @@ export default function TripEndScreen() {
       // 2. End the trip
       const summary = await offlineEndTrip(activeTrip!.id!, Number(odometer), photo, loc);
       setTripSummary(summary);
+
+      // Clear temp storage
+      try {
+        await AsyncStorage.removeItem('@pickpack_temp_end_odometer');
+        await AsyncStorage.removeItem('@pickpack_temp_end_photo');
+      } catch {}
 
       // 3. Stop GPS tracking
       stopTrackingDriverLocation();
@@ -355,11 +446,11 @@ export default function TripEndScreen() {
 
         {/* End Button */}
         <TouchableOpacity
-          style={[styles.endBtn, loading && { opacity: 0.6 }]}
+          style={[styles.endBtn, (loading || checkingRequirements) && { opacity: 0.6 }]}
           onPress={handleEndTrip}
-          disabled={loading}
+          disabled={loading || checkingRequirements}
         >
-          {loading ? (
+          {loading || checkingRequirements ? (
             <ActivityIndicator color={COLORS.WHITE} />
           ) : (
             <>

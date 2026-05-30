@@ -8,15 +8,6 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { OfflineQueueItem, OfflineActionType, Task, TaskStatus } from '../types';
-import {
-  acceptTask,
-  rejectTask,
-  updateTaskStatus,
-  completeTask,
-  uploadProofOfDelivery,
-  uploadSignature,
-  uploadDeliveryDocument,
-} from './taskService';
 
 // ─── AsyncStorage Keys ───────────────────────────────────────────
 const QUEUE_KEY = '@pickpack_offline_queue';
@@ -180,32 +171,37 @@ export async function processQueue(): Promise<SyncReport> {
   console.log(`🔄 Processing offline queue: ${queue.length} items`);
 
   for (const item of queue) {
+    // Refresh the item from the latest queue in case a previous action (like start_trip)
+    // remapped the temp IDs to real IDs.
+    const currentQueue = await getQueue();
+    const latestItem = currentQueue.find(q => q.id === item.id) || item;
+
     // Skip items that exceeded max retries
-    if (item.retryCount >= item.maxRetries) {
+    if (latestItem.retryCount >= latestItem.maxRetries) {
       report.failed++;
       report.errors.push({
-        id: item.id,
-        action: item.action,
-        error: `Max retries exceeded (${item.maxRetries})`,
+        id: latestItem.id,
+        action: latestItem.action,
+        error: `Max retries exceeded (${latestItem.maxRetries})`,
       });
       continue;
     }
 
     try {
-      await executeSyncAction(item);
-      await removeFromQueue(item.id);
+      await executeSyncAction(latestItem);
+      await removeFromQueue(latestItem.id);
       report.synced++;
-      console.log(`✅ Synced: ${item.action} for task ${item.taskId}`);
+      console.log(`✅ Synced: ${latestItem.action} for task ${latestItem.taskId}`);
     } catch (e: any) {
       const errorMsg = e?.message || String(e);
-      await markQueueItemFailed(item.id, errorMsg);
+      await markQueueItemFailed(latestItem.id, errorMsg);
       report.failed++;
       report.errors.push({
-        id: item.id,
-        action: item.action,
+        id: latestItem.id,
+        action: latestItem.action,
         error: errorMsg,
       });
-      console.log(`❌ Sync failed: ${item.action} for task ${item.taskId}: ${errorMsg}`);
+      console.log(`❌ Sync failed: ${latestItem.action} for task ${latestItem.taskId}: ${errorMsg}`);
     }
   }
 
@@ -220,6 +216,16 @@ export async function processQueue(): Promise<SyncReport> {
 /** Execute a single offline action against Firestore */
 async function executeSyncAction(item: OfflineQueueItem): Promise<void> {
   const { action, taskId, payload } = item;
+
+  const {
+    acceptTask,
+    rejectTask,
+    updateTaskStatus,
+    completeTask,
+    uploadProofOfDelivery,
+    uploadSignature,
+    uploadDeliveryDocument,
+  } = require('./taskService');
 
   switch (action) {
     case 'accept_task':
@@ -345,17 +351,29 @@ async function executeSyncAction(item: OfflineQueueItem): Promise<void> {
         console.log('Sync: failed to create start odometer reading:', e);
       }
 
-      // 4. Update the active trip local cache if it is still active and matches this temp ID
-      try {
-        const rawActive = await AsyncStorage.getItem('@pickpack_active_trip');
-        if (rawActive) {
-          const activeTrip = JSON.parse(rawActive);
-          if (activeTrip.id === tempTripId) {
-            activeTrip.id = realTripId;
-            await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(activeTrip));
+      // 4. Check if an end_trip is also queued (trip was ended offline)
+      //    If so, do NOT restore the trip to local cache — it's already cleared
+      const currentQueueRaw = await AsyncStorage.getItem(QUEUE_KEY);
+      const currentQueueItems = currentQueueRaw ? JSON.parse(currentQueueRaw) as OfflineQueueItem[] : [];
+      const hasQueuedEndTrip = currentQueueItems.some(
+        q => !q.synced && q.action === 'end_trip' && (q.taskId === tempTripId || q.taskId === realTripId)
+      );
+
+      if (!hasQueuedEndTrip) {
+        // Only update local cache if the trip is still ongoing
+        try {
+          const rawActive = await AsyncStorage.getItem('@pickpack_active_trip');
+          if (rawActive) {
+            const activeTrip = JSON.parse(rawActive);
+            if (activeTrip.id === tempTripId) {
+              activeTrip.id = realTripId;
+              await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(activeTrip));
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      } else {
+        console.log('Sync: end_trip is queued, NOT restoring trip to local cache');
+      }
 
       // 5. CRITICAL: Remap any subsequent offline queue actions that refer to tempTripId!
       try {
@@ -392,24 +410,26 @@ async function executeSyncAction(item: OfflineQueueItem): Promise<void> {
     }
 
     case 'end_trip': {
-      const { endTrip } = require('./tripService');
+      const { endTrip, getActiveTrip, getTripById, cleanupAllOrphanedTrips: _cleanup } = require('./tripService');
       const { addOdometerReading, uploadOdometerPhoto } = require('./fuelService');
       const { db } = require('./firebase');
-      const { doc, setDoc } = require('firebase/firestore');
+      const { doc, setDoc, collection, query, where, getDocs, updateDoc } = require('firebase/firestore');
 
       const realTripId = taskId; // This will already be remapped to the real ID by step 5 above!
-      const { endOdometer, photoUri, location } = payload;
+      const { endOdometer, photoUri, location, driverId: payloadDriverId, driverName: payloadDriverName } = payload;
 
-      let driverId = '';
-      let driverName = '';
-      try {
-        const { getTripById } = require('./tripService');
-        const tripObj = await getTripById(realTripId);
-        if (tripObj) {
-          driverId = tripObj.driverId;
-          driverName = tripObj.driverName;
-        }
-      } catch {}
+      let driverId = (payloadDriverId as string) || '';
+      let driverName = (payloadDriverName as string) || '';
+
+      if (!driverId && realTripId) {
+        try {
+          const tripObj = await getTripById(realTripId);
+          if (tripObj) {
+            driverId = tripObj.driverId;
+            driverName = tripObj.driverName;
+          }
+        } catch {}
+      }
 
       // 1. Create end odometer reading
       try {
@@ -436,9 +456,53 @@ async function executeSyncAction(item: OfflineQueueItem): Promise<void> {
       }
 
       // 2. End the trip session on Firestore
-      await endTrip(realTripId, endOdometer as number);
+      //    If the specific trip ID doesn't exist (temp ID wasn't remapped), find it by driverId
+      let tripEnded = false;
+      try {
+        await endTrip(realTripId, endOdometer as number);
+        tripEnded = true;
+      } catch (e: any) {
+        console.log(`Sync: endTrip(${realTripId}) failed: ${e?.message}. Trying by driverId...`);
+        // Fallback: find the driver's active trip and end it
+        if (driverId) {
+          try {
+            const activeTrip = await getActiveTrip(driverId);
+            if (activeTrip && activeTrip.id) {
+              await endTrip(activeTrip.id, endOdometer as number);
+              tripEnded = true;
+              console.log(`Sync: ended trip ${activeTrip.id} via driverId fallback`);
+            }
+          } catch (e2: any) {
+            console.log(`Sync: fallback endTrip also failed: ${e2?.message}`);
+          }
+        }
+      }
 
-      // 3. Mark driver as offline
+      // 3. CRITICAL: Cancel ALL remaining active trips for this driver
+      //    This ensures no orphaned trips remain
+      if (driverId) {
+        try {
+          const q = query(
+            collection(db, 'tripSessions'),
+            where('driverId', '==', driverId),
+            where('status', '==', 'active'),
+          );
+          const snap = await getDocs(q);
+          for (const d of snap.docs) {
+            try {
+              await updateDoc(doc(db, 'tripSessions', d.id), {
+                status: 'cancelled',
+                endTime: Date.now(),
+              });
+              console.log(`🧹 Cancelled orphaned trip ${d.id} for driver ${driverId}`);
+            } catch {}
+          }
+        } catch (e) {
+          console.log('Sync: failed to clean up orphaned trips:', e);
+        }
+      }
+
+      // 4. Mark driver as offline
       if (driverId) {
         try {
           await setDoc(
@@ -448,6 +512,14 @@ async function executeSyncAction(item: OfflineQueueItem): Promise<void> {
           );
         } catch {}
       }
+
+      // 5. Remove active trip local cache AND set a trip-ended marker
+      //    The marker prevents offlineGetActiveTrip from re-fetching the trip
+      //    from the network during the brief window before Firestore propagates
+      try {
+        await AsyncStorage.removeItem('@pickpack_active_trip');
+        await AsyncStorage.setItem('@pickpack_trip_just_ended', String(Date.now()));
+      } catch {}
 
       break;
     }
@@ -483,5 +555,7 @@ export async function clearAllOfflineData(): Promise<void> {
     clearQueue(),
     clearTaskCache(),
     AsyncStorage.removeItem(LAST_SYNC_KEY),
+    AsyncStorage.removeItem('@pickpack_active_trip'),
+    AsyncStorage.removeItem('@pickpack_trip_just_ended'),
   ]);
 }

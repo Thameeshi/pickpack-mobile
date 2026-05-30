@@ -1,9 +1,11 @@
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { DriverLocationTracker } from '../src/components/DriverLocationTracker';
 
 export default function RootLayout() {
   return (
     <>
+      <DriverLocationTracker />
       <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="auth/login" />

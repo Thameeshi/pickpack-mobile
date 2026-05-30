@@ -41,11 +41,13 @@ export async function updateFuelExpenseStatus(
 export async function uploadFuelReceipt(
   expenseId: string, imageUri: string
 ): Promise<string> {
-  return uploadFileToStorage(
+  const downloadUrl = await uploadFileToStorage(
     imageUri,
     `receipts/${expenseId}/${Date.now()}.jpg`,
     'image/jpeg',
   );
+  await updateDoc(doc(db, 'fuelExpenses', expenseId), { receiptUrl: downloadUrl });
+  return downloadUrl;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -78,11 +80,13 @@ export async function getTodayOdometerReadings(driverId: string): Promise<Odomet
 export async function uploadOdometerPhoto(
   readingId: string, imageUri: string
 ): Promise<string> {
-  return uploadFileToStorage(
+  const downloadUrl = await uploadFileToStorage(
     imageUri,
     `odometer/${readingId}/${Date.now()}.jpg`,
     'image/jpeg',
   );
+  await updateDoc(doc(db, 'odometerReadings', readingId), { photoUrl: downloadUrl });
+  return downloadUrl;
 }
 
 // Calculate daily distance from odometer readings

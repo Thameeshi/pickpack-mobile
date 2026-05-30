@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator, Image, Modal
+  ScrollView, ActivityIndicator, Image, Modal, FlatList
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import NetInfo from '@react-native-community/netinfo';
@@ -9,6 +9,7 @@ import { useAuth } from '../../src/hooks/useAuth';
 import { useDrivers } from '../../src/hooks/useDrivers';
 import { createTask, getTaskById, updateTask, assignTaskToDriver, getAllTasks } from '../../src/services/taskService';
 import { getDriversTripStatus } from '../../src/services/tripService';
+import { getWarehouses, getSupermarkets, LocationRecord } from '../../src/services/warehouseService';
 import { TaskPriority, Driver } from '../../src/types';
 import { COLORS, SPACING, RADIUS, FONT_SIZES, SHADOWS } from '../../src/constants/theme';
 import { Ionicons } from '@expo/vector-icons';
@@ -60,6 +61,26 @@ export default function AssignTaskScreen() {
   const [driverTaskStatus, setDriverTaskStatus] = useState<Record<string, string>>({});
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const [middleLocations, setMiddleLocations] = useState<string[]>([]);
+  const [warehouseList, setWarehouseList] = useState<LocationRecord[]>([]);
+  const [supermarketList, setSupermarketList] = useState<LocationRecord[]>([]);
+  const [showPickupPicker, setShowPickupPicker] = useState(false);
+  const [showDeliveryPicker, setShowDeliveryPicker] = useState(false);
+  const [pickupSearch, setPickupSearch] = useState('');
+  const [deliverySearch, setDeliverySearch] = useState('');
+
+  // Load locations from Firestore
+  useEffect(() => {
+    const loadLocations = async () => {
+      try {
+        const [wh, sm] = await Promise.all([getWarehouses(), getSupermarkets()]);
+        setWarehouseList(wh);
+        setSupermarketList(sm);
+      } catch (e) {
+        console.log('Error loading locations', e);
+      }
+    };
+    loadLocations();
+  }, []);
 
   // Custom Modal State
   const [modalVisible, setModalVisible] = useState(false);
@@ -333,13 +354,21 @@ export default function AssignTaskScreen() {
                         <Text style={{ fontSize: FONT_SIZES.LG, color: COLORS.PRIMARY, fontWeight: 'bold' }}>+</Text>
                       </TouchableOpacity>
                     </View>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. Central Warehouse, Port Road"
-                      placeholderTextColor={COLORS.GRAY_400}
-                      value={pickupLocation}
-                      onChangeText={setPickupLocation}
-                    />
+                    <TouchableOpacity
+                      style={styles.selectorField}
+                      onPress={() => {
+                        setPickupSearch('');
+                        setShowPickupPicker(true);
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <Ionicons name="business-outline" size={20} color={COLORS.GRAY_500} style={{ marginRight: 8 }} />
+                        <Text style={[styles.selectorFieldText, !pickupLocation && styles.placeholderText]}>
+                          {pickupLocation || "Select Pickup Warehouse"}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-down-outline" size={18} color={COLORS.GRAY_400} />
+                    </TouchableOpacity>
                   </View>
 
                   {middleLocations.map((loc, index) => (
@@ -370,13 +399,21 @@ export default function AssignTaskScreen() {
                   
                   <View style={[styles.inputGroup, { marginTop: SPACING.MD }]}>
                     <Text style={styles.label}>Delivery Location (Supermarket) *</Text>
-                    <TextInput
-                      style={styles.input}
-                      placeholder="e.g. SaveMart Supermarket, Downtown"
-                      placeholderTextColor={COLORS.GRAY_400}
-                      value={deliveryLocation}
-                      onChangeText={setDeliveryLocation}
-                    />
+                    <TouchableOpacity
+                      style={styles.selectorField}
+                      onPress={() => {
+                        setDeliverySearch('');
+                        setShowDeliveryPicker(true);
+                      }}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+                        <Ionicons name="cart-outline" size={20} color={COLORS.GRAY_500} style={{ marginRight: 8 }} />
+                        <Text style={[styles.selectorFieldText, !deliveryLocation && styles.placeholderText]}>
+                          {deliveryLocation || "Select Delivery Supermarket"}
+                        </Text>
+                      </View>
+                      <Ionicons name="chevron-down-outline" size={18} color={COLORS.GRAY_400} />
+                    </TouchableOpacity>
                   </View>
                 </View>
               </View>
@@ -520,6 +557,161 @@ export default function AssignTaskScreen() {
                 {modalType === 'success' ? 'Continue' : 'Try Again'}
               </Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Pickup Location Picker Modal */}
+      <Modal
+        visible={showPickupPicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPickupPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.searchModalContent]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Warehouse</Text>
+              <TouchableOpacity onPress={() => setShowPickupPicker(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={24} color={COLORS.GRAY_600} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.searchBarContainer}>
+              <Ionicons name="search-outline" size={18} color={COLORS.GRAY_400} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search warehouses..."
+                placeholderTextColor={COLORS.GRAY_400}
+                value={pickupSearch}
+                onChangeText={setPickupSearch}
+              />
+            </View>
+
+            <FlatList
+              data={warehouseList.filter(w => 
+                w.name.toLowerCase().includes(pickupSearch.toLowerCase()) || 
+                (w.address && w.address.toLowerCase().includes(pickupSearch.toLowerCase())) ||
+                (w.contact && w.contact.toLowerCase().includes(pickupSearch.toLowerCase()))
+              )}
+              keyExtractor={(item) => item.id}
+              style={styles.locationList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.locationItem,
+                    pickupLocation === item.name && styles.locationItemSelected
+                  ]}
+                  onPress={() => {
+                    setPickupLocation(item.name);
+                    setShowPickupPicker(false);
+                  }}
+                >
+                  <Ionicons name="business" size={18} color={COLORS.PRIMARY} style={{ marginRight: 8 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.locationItemName}>{item.name}</Text>
+                    {item.address && <Text style={styles.locationItemAddress}>{item.address}</Text>}
+                    {item.contact && <Text style={[styles.locationItemAddress, { color: COLORS.GRAY_600 }]}>📞 {item.contact}</Text>}
+                  </View>
+                  {pickupLocation === item.name && <Ionicons name="checkmark" size={18} color={COLORS.PRIMARY} />}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No matching warehouses found</Text>
+                  {pickupSearch.trim().length > 0 && (
+                    <TouchableOpacity
+                      style={styles.customLocationBtn}
+                      onPress={() => {
+                        setPickupLocation(pickupSearch.trim());
+                        setShowPickupPicker(false);
+                      }}
+                    >
+                      <Text style={styles.customLocationBtnText}>Use "{pickupSearch.trim()}" as custom warehouse</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              }
+            />
+          </View>
+        </View>
+      </Modal>
+
+      {/* Delivery Location Picker Modal */}
+      <Modal
+        visible={showDeliveryPicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowDeliveryPicker(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, styles.searchModalContent]}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Select Supermarket</Text>
+              <TouchableOpacity onPress={() => setShowDeliveryPicker(false)} style={styles.closeBtn}>
+                <Ionicons name="close" size={24} color={COLORS.GRAY_600} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.searchBarContainer}>
+              <Ionicons name="search-outline" size={18} color={COLORS.GRAY_400} style={styles.searchIcon} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search supermarkets..."
+                placeholderTextColor={COLORS.GRAY_400}
+                value={deliverySearch}
+                onChangeText={setDeliverySearch}
+              />
+            </View>
+
+            <FlatList
+              data={supermarketList.filter(s => 
+                s.name.toLowerCase().includes(deliverySearch.toLowerCase()) || 
+                (s.address && s.address.toLowerCase().includes(deliverySearch.toLowerCase())) ||
+                (s.contact && s.contact.toLowerCase().includes(deliverySearch.toLowerCase()))
+              )}
+              keyExtractor={(item) => item.id}
+              style={styles.locationList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={[
+                    styles.locationItem,
+                    deliveryLocation === item.name && styles.locationItemSelected
+                  ]}
+                  onPress={() => {
+                    setDeliveryLocation(item.name);
+                    if (item.contact) {
+                      setRecipientPhone(item.contact);
+                    }
+                    setShowDeliveryPicker(false);
+                  }}
+                >
+                  <Ionicons name="cart" size={18} color={COLORS.SUCCESS} style={{ marginRight: 8 }} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.locationItemName}>{item.name}</Text>
+                    {item.address && <Text style={styles.locationItemAddress}>{item.address}</Text>}
+                    {item.contact && <Text style={[styles.locationItemAddress, { color: COLORS.GRAY_600 }]}>📞 {item.contact}</Text>}
+                  </View>
+                  {deliveryLocation === item.name && <Ionicons name="checkmark" size={18} color={COLORS.SUCCESS} />}
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No matching supermarkets found</Text>
+                  {deliverySearch.trim().length > 0 && (
+                    <TouchableOpacity
+                      style={styles.customLocationBtn}
+                      onPress={() => {
+                        setDeliveryLocation(deliverySearch.trim());
+                        setShowDeliveryPicker(false);
+                      }}
+                    >
+                      <Text style={styles.customLocationBtnText}>Use "{deliverySearch.trim()}" as custom supermarket</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              }
+            />
           </View>
         </View>
       </Modal>
@@ -762,5 +954,140 @@ const styles = StyleSheet.create({
     fontSize: FONT_SIZES.XS,
     fontWeight: '700',
     color: COLORS.DANGER,
+  },
+  warehouseScroll: {
+    marginTop: SPACING.SM,
+    marginBottom: SPACING.XS,
+  },
+  warehouseScrollContent: {
+    gap: SPACING.XS,
+    paddingRight: SPACING.LG,
+  },
+  warehousePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.GRAY_100,
+    paddingHorizontal: SPACING.MD,
+    paddingVertical: SPACING.SM - 2,
+    borderRadius: RADIUS.FULL,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+    marginRight: 6,
+  },
+  warehousePillSelected: {
+    backgroundColor: COLORS.PRIMARY,
+    borderColor: COLORS.PRIMARY,
+  },
+  warehousePillText: {
+    fontSize: 12,
+    color: COLORS.GRAY_800,
+    fontWeight: '500',
+  },
+  warehousePillTextSelected: {
+    color: COLORS.WHITE,
+    fontWeight: '600',
+  },
+  selectorField: {
+    backgroundColor: COLORS.GRAY_50,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+    borderRadius: RADIUS.MD,
+    paddingHorizontal: SPACING.MD,
+    paddingVertical: SPACING.MD,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  selectorFieldText: {
+    fontSize: FONT_SIZES.MD,
+    color: COLORS.GRAY_900,
+    fontWeight: '500',
+  },
+  placeholderText: {
+    color: COLORS.GRAY_400,
+  },
+  searchModalContent: {
+    maxHeight: '80%',
+    width: '90%',
+    maxWidth: 400,
+    padding: SPACING.LG,
+    alignItems: 'stretch',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: SPACING.MD,
+  },
+  closeBtn: {
+    padding: 4,
+  },
+  searchBarContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: COLORS.GRAY_50,
+    borderWidth: 1,
+    borderColor: COLORS.GRAY_200,
+    borderRadius: RADIUS.MD,
+    paddingHorizontal: SPACING.SM,
+    marginBottom: SPACING.MD,
+  },
+  searchIcon: {
+    marginRight: 6,
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: SPACING.SM,
+    fontSize: FONT_SIZES.MD,
+    color: COLORS.GRAY_900,
+  },
+  locationList: {
+    flexGrow: 0,
+    marginBottom: SPACING.SM,
+  },
+  locationItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: SPACING.MD,
+    paddingHorizontal: SPACING.SM,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.GRAY_100,
+  },
+  locationItemSelected: {
+    backgroundColor: COLORS.GRAY_50,
+  },
+  locationItemName: {
+    fontSize: FONT_SIZES.MD,
+    fontWeight: '600',
+    color: COLORS.GRAY_900,
+  },
+  locationItemAddress: {
+    fontSize: FONT_SIZES.XS,
+    color: COLORS.GRAY_500,
+    marginTop: 2,
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: SPACING.XL,
+  },
+  emptyText: {
+    fontSize: FONT_SIZES.SM,
+    color: COLORS.GRAY_500,
+    textAlign: 'center',
+    marginBottom: SPACING.MD,
+  },
+  customLocationBtn: {
+    backgroundColor: COLORS.PRIMARY + '10',
+    borderWidth: 1,
+    borderColor: COLORS.PRIMARY + '30',
+    borderRadius: RADIUS.MD,
+    paddingVertical: SPACING.SM,
+    paddingHorizontal: SPACING.MD,
+  },
+  customLocationBtnText: {
+    color: COLORS.PRIMARY,
+    fontSize: FONT_SIZES.SM,
+    fontWeight: '600',
+    textAlign: 'center',
   },
 });

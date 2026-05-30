@@ -34,9 +34,13 @@ export async function startTrip(
   endLocation?: string,
   middleLocations?: string[],
 ): Promise<string> {
-  // Check if there's already an active trip
+  // Check if there's already an active trip — return existing instead of throwing
+  // This prevents offline sync retries from creating duplicate trips
   const existing = await getActiveTrip(driverId);
-  if (existing) throw new Error('You already have an active trip. Please end it first.');
+  if (existing) {
+    console.log(`Driver ${driverId} already has active trip ${existing.id}, reusing it`);
+    return existing.id!;
+  }
 
   const tripData: Omit<TripSession, 'id'> = {
     driverId,
@@ -155,7 +159,80 @@ export async function endTrip(
   };
 
   await updateDoc(tripRef, updates);
+
+  // CLEANUP: Also end/cancel any OTHER orphaned active trips for this driver
+  // This handles duplicate trips created by repeated offline sync attempts
+  try {
+    await cancelOrphanedTrips(trip.driverId, tripId);
+  } catch (e) {
+    console.log('Failed to clean up orphaned trips:', e);
+  }
+
   return { ...trip, ...updates };
+}
+
+// ─── Cancel all orphaned active trips for a driver (except the specified one) ─
+async function cancelOrphanedTrips(driverId: string, excludeTripId?: string): Promise<number> {
+  const q = query(
+    collection(db, 'tripSessions'),
+    where('driverId', '==', driverId),
+    where('status', '==', 'active'),
+  );
+  const snap = await getDocs(q);
+  let cancelled = 0;
+  for (const d of snap.docs) {
+    if (excludeTripId && d.id === excludeTripId) continue;
+    try {
+      await updateDoc(doc(db, 'tripSessions', d.id), {
+        status: 'cancelled' as TripStatus,
+        endTime: Date.now(),
+      });
+      cancelled++;
+    } catch (e) {
+      console.log('Failed to cancel orphaned trip', d.id, e);
+    }
+  }
+  if (cancelled > 0) {
+    console.log(`🧹 Cleaned up ${cancelled} orphaned active trip(s) for driver ${driverId}`);
+  }
+  return cancelled;
+}
+
+// ─── Clean up ALL orphaned active trips across all drivers ─────────
+export async function cleanupAllOrphanedTrips(): Promise<number> {
+  const q = query(
+    collection(db, 'tripSessions'),
+    where('status', '==', 'active'),
+  );
+  const snap = await getDocs(q);
+
+  // Group by driverId, keep only the newest one per driver
+  const byDriver: Record<string, Array<{ id: string; startTime: number }>> = {};
+  for (const d of snap.docs) {
+    const data = d.data();
+    const driverId = data.driverId || 'unknown';
+    if (!byDriver[driverId]) byDriver[driverId] = [];
+    byDriver[driverId].push({ id: d.id, startTime: data.startTime || 0 });
+  }
+
+  let totalCancelled = 0;
+  for (const [driverId, trips] of Object.entries(byDriver)) {
+    if (trips.length <= 1) continue;
+    // Sort by startTime descending, keep the newest
+    trips.sort((a, b) => b.startTime - a.startTime);
+    for (let i = 1; i < trips.length; i++) {
+      try {
+        await updateDoc(doc(db, 'tripSessions', trips[i].id), {
+          status: 'cancelled' as TripStatus,
+          endTime: Date.now(),
+        });
+        totalCancelled++;
+      } catch {}
+    }
+  }
+
+  console.log(`🧹 Total orphaned trips cancelled: ${totalCancelled}`);
+  return totalCancelled;
 }
 
 // ─── Add a task to the active trip ────────────────────────────────
@@ -338,6 +415,7 @@ export async function offlineStartTrip(
       middleLocations: middleLocations || [],
     };
     await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(tripData));
+    await AsyncStorage.removeItem('@pickpack_trip_just_ended');
     return tripId;
   }
 
@@ -358,6 +436,7 @@ export async function offlineStartTrip(
   };
 
   await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(tripData));
+  await AsyncStorage.removeItem('@pickpack_trip_just_ended');
 
   await addToQueue('start_trip', tempTripId, {
     driverId,
@@ -386,6 +465,7 @@ export async function offlineEndTrip(
   if (online) {
     const summary = await endTrip(tripId, endOdometer);
     await AsyncStorage.removeItem('@pickpack_active_trip');
+    await AsyncStorage.setItem('@pickpack_trip_just_ended', String(Date.now()));
     return summary;
   }
 
@@ -409,12 +489,15 @@ export async function offlineEndTrip(
   const summary = { ...trip, ...updates };
 
   await addToQueue('end_trip', tripId, {
+    driverId: trip.driverId,
+    driverName: trip.driverName,
     endOdometer,
     photoUri: photoUri || null,
     location: location || null,
   });
 
   await AsyncStorage.removeItem('@pickpack_active_trip');
+  await AsyncStorage.setItem('@pickpack_trip_just_ended', String(Date.now()));
 
   return summary;
 }
@@ -423,28 +506,79 @@ export async function offlineEndTrip(
  * Offline-aware get active trip.
  */
 export async function offlineGetActiveTrip(driverId: string): Promise<TripSession | null> {
+  // 0. Check the "just ended" marker — if the trip was ended very recently
+  //    (via offline sync), don't trust the network for 30 seconds to avoid
+  //    Firestore propagation delays re-creating a stale trip in local cache.
+  try {
+    const endedMarker = await AsyncStorage.getItem('@pickpack_trip_just_ended');
+    if (endedMarker) {
+      const endedAt = parseInt(endedMarker, 10);
+      const elapsed = Date.now() - endedAt;
+      if (elapsed < 30000) {
+        // Trip was ended very recently. Clear local cache and return null.
+        await AsyncStorage.removeItem('@pickpack_active_trip');
+        return null;
+      } else {
+        // Marker expired, clean up
+        await AsyncStorage.removeItem('@pickpack_trip_just_ended');
+      }
+    }
+  } catch {}
+
+  // 1. Get from local cache
+  let localTrip: TripSession | null = null;
   try {
     const raw = await AsyncStorage.getItem('@pickpack_active_trip');
     if (raw) {
       const trip = JSON.parse(raw) as TripSession;
       if (trip.driverId === driverId && trip.status === 'active') {
-        return trip;
+        localTrip = trip;
       }
     }
   } catch {}
 
+  // 2. If online, fetch from network to reconcile
   const online = await checkOnline();
   if (online) {
     try {
-      const trip = await getActiveTrip(driverId);
-      if (trip) {
-        await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(trip));
-        return trip;
+      const { getQueue } = require('./offlineService');
+      const queue = await getQueue();
+      const hasPendingStart = queue.some((q: any) => q.action === 'start_trip');
+      const hasPendingEnd = queue.some((q: any) => q.action === 'end_trip');
+
+      const netTrip = await getActiveTrip(driverId);
+
+      if (netTrip) {
+        // Network has an active trip.
+        // If there's a pending end_trip, it means the network is stale. Don't trust network.
+        if (hasPendingEnd) {
+          // The local cache should be empty (cleared by offlineEndTrip).
+          if (localTrip) {
+            await AsyncStorage.removeItem('@pickpack_active_trip');
+            localTrip = null;
+          }
+        } else {
+          // Network is authoritative. Update local cache.
+          await AsyncStorage.setItem('@pickpack_active_trip', JSON.stringify(netTrip));
+          localTrip = netTrip;
+        }
+      } else {
+        // Network has NO active trip.
+        // If there's a pending start_trip, local cache is correct. Don't clear it.
+        if (!hasPendingStart) {
+          // Network is authoritative. Clear local cache.
+          if (localTrip) {
+            await AsyncStorage.removeItem('@pickpack_active_trip');
+            localTrip = null;
+          }
+        }
       }
-    } catch {}
+    } catch (e) {
+      console.log('offlineGetActiveTrip reconciliation error:', e);
+    }
   }
 
-  return null;
+  return localTrip;
 }
 
 /**

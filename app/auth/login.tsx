@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import {
   View, Text, StyleSheet, TextInput, TouchableOpacity,
-  ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform,
+  ScrollView, ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Image,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '../../src/hooks/useAuth';
@@ -93,7 +93,7 @@ export default function LoginScreen() {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.logoContainer}>
-            <Text style={styles.logoIcon}>📦</Text>
+            <Image source={require('../../assets/icons/tracking-truck.png')} style={styles.logoImage} />
           </View>
           <Text style={styles.title}>PickPack</Text>
           <View style={styles.goldLine} />
@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center', marginBottom: SPACING.LG,
     ...SHADOWS.LG,
   },
-  logoIcon: { fontSize: 42 },
+  logoImage: { width: 56, height: 56, resizeMode: 'contain' },
   title: { fontSize: FONT_SIZES.DISPLAY, fontWeight: '800', color: COLORS.WHITE, letterSpacing: 2 },
   goldLine: {
     width: 48, height: 3, backgroundColor: COLORS.ACCENT,

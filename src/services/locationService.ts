@@ -14,6 +14,12 @@ export async function startTrackingDriverLocation(
     throw new Error('Location permission not granted');
   }
 
+  // Avoid duplicate watchers if start is called again
+  if (subscription) {
+    try { subscription.remove(); } catch {}
+    subscription = null;
+  }
+
   subscription = await Location.watchPositionAsync(
     {
       accuracy: Location.Accuracy.Balanced,

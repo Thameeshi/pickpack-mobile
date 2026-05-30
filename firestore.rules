@@ -212,6 +212,12 @@ service cloud.firestore {
       allow delete: if isSuperAdmin();
     }
 
+    // ─── Locations collection ─────────────────────────────────────
+    match /locations/{locationId} {
+      allow read: if isSignedIn();
+      allow write: if isSuperAdmin();
+    }
+
     // ─── Reports ──────────────────────────────────────────────────
     match /reports/{reportId} {
       allow read: if isSupervisor();

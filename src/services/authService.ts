@@ -85,6 +85,20 @@ export async function createPendingDriver(
 // ─── Login ─────────────────────────────────────────────────────────
 export async function loginUser(email: string, password: string): Promise<User> {
   const cred = await signInWithEmailAndPassword(auth, email, password);
+  try {
+    // Keep profile flags in sync after a successful login.
+    // If an admin reset was initiated earlier, the user logging in with a valid password
+    // should clear any "reset required" indicators on the dashboard.
+    await updateDoc(doc(db, 'users', cred.user.uid), {
+      lastLoginAt: new Date().toISOString(),
+      passwordResetRequired: false,
+      temporaryPassword: false,
+      tempPasswordSetAt: null,
+    } as any);
+  } catch (e) {
+    // Non-blocking: login should still succeed even if profile update fails
+    console.log('Post-login profile sync failed:', e);
+  }
   return cred.user;
 }
 
